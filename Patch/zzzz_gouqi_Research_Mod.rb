@@ -20,6 +20,7 @@ module ResearchMod
   MAP_DETAIL_WRAP_CHARS = 42
   MAP_DETAIL_FONT_SIZE = 18
   ACTOR_ENCYCLOPEDIA_PAGE_SIZE = 100
+  ACTOR_CUTIN_PAGE_SIZE = 100
   ACTOR_ENCYCLOPEDIA_LIST_WIDTH = 304
   ACTOR_ENCYCLOPEDIA_WRAP_CHARS = 26
   ACTOR_ENCYCLOPEDIA_FONT_SIZE = 18
@@ -30,6 +31,12 @@ module ResearchMod
   LARGE_MEDAL_ITEM_ID = 900
   LEWD_SOUL_ITEM_ID = 628
   LEECH_CELL_ITEM_ID = 282
+
+  STUCK_SANT_MOUNTAIN_SWITCH_ID = 2479
+  STUCK_SANT_MOUNTAIN_WARP_SWITCH_ID = 100
+  STUCK_SANT_MOUNTAIN_FALL_SWITCH_ID = 2116
+  STUCK_NEW_HUMAN_VARIABLE_ID = 1150
+  STUCK_NEW_HUMAN_TARGET_VALUE = 17
   SMALL_MEDAL_EXCHANGE_VARIABLE_ID = 55
   LARGE_MEDAL_EXCHANGE_VARIABLE_ID = 59
   CASINO_COIN_VARIABLE_ID = 110
@@ -40,24 +47,48 @@ module ResearchMod
   PARTY_MEMBER_MAX_PLUS_VARIABLE_ID = 56
   PARTY_MEMBER_BASE_MAX = 8
   PARTY_MEMBER_TOTAL_MAX = 99
+  MAP_FOLLOWER_COUNT_KEY = :@research_mod_map_follower_count
+  MAP_FOLLOWER_COUNT_DEFAULT = 3
+  MAP_FOLLOWER_COUNT_MAX = 99
   VALUE_VARIABLE_MAX = 99_999_999
   VALUE_STAT_MAX = 9_999_999
   STEAL_ALWAYS_SUCCESS_KEY = :@research_mod_steal_always_success
   MILK_ALWAYS_SUCCESS_KEY = :@research_mod_milk_always_success
   DROP_ALWAYS_SUCCESS_KEY = :@research_mod_drop_always_success
   TEMPTATION_IGNORE_HP_KEY = :@research_mod_temptation_ignore_hp
+  TEMPTATION_DISABLED_KEY = :@research_mod_temptation_disabled
+  LOSE_EVENT_SKIP_KEY = :@research_mod_lose_event_skip
   SURE_HIT_KILL_KEY = :@research_mod_sure_hit_kill
   THROUGH_MODE_KEY = :@research_mod_through_mode
+  NO_RANDOM_ENCOUNTER_KEY = :@research_mod_no_random_encounter
+  ENEMY_STAT_MULTIPLIER_KEY = :@research_mod_enemy_stat_multiplier
+  EXPERIMENTAL_FEATURES_ENABLED_KEY = :@research_mod_experimental_features_enabled
+  ENEMY_STAT_MULTIPLIER_DEFAULT = 1
+  ENEMY_STAT_MULTIPLIER_MAX = 99
   PREVENT_EVENT_LUCA_FRONT_KEY = :@research_mod_prevent_event_luca_front
   FOLLOW_ALWAYS_SUCCESS_KEY = :@research_mod_follow_always_success
   BATTLE_ENEMY_STATUS_KEY = :@research_mod_battle_enemy_status
   BATTLE_PARTY_STATUS_KEY = :@research_mod_battle_party_status
+  BATTLE_CUTIN_VIEW_KEY = :@research_mod_battle_cutin_view
   BATTLE_RECORD_KEY = :@research_mod_battle_record
+  BATTLE_EDITOR_KEY = :@research_mod_battle_editor
+  TEMPTATION_IMMUNITY_KEY = :@research_mod_temptation_immunity
+  TEMPTATION_STATE_ID = 26
+  AUDIO_OVERLAY_KEY = :@research_mod_audio_overlay
   BATTLE_RECORD_MAX_LINES = 5000
+  BATTLE_DIALOGUE_PAGE_SIZE = 100
+  HERO_SKILL_TYPE_ID = 33
+  DANCE_SKILL_TYPE_ID = 37
+  SING_SKILL_TYPE_ID = 38
+  TRANSFORMATION_SKILL_IDS = [3126, 3127, 9783, 3128, 3129]
   MANUAL_ENEMY_DIALOGUE_KEY = :@research_mod_manual_enemy_dialogue
   SPECIAL_ENEMY_DIALOGUE_SKILL_IDS = [*2109..2122, 9433, 9434]
+  PLAYFUL_DIALOGUE_SKILL_ID = 28
+  PLAYFUL_COMMON_EVENT_RANGE = (40..86)
+  PLAYFUL_ACTOR_VARIABLE_ID = 100
   MILKING_COMMON_EVENT_ID = 12
   MILKING_RESULT_VARIABLE_ID = 11
+  MILKING_SKILL_IDS = [1439, 2380, 2382, 9512]
   TEMPTATION_CHECK_COMMON_EVENT_ID = 6
   TEMPTATION_ROLL_VARIABLE_ID = 13
   TEMPTATION_COMMON_EVENT_ID = 203
@@ -70,6 +101,7 @@ module ResearchMod
   RESEARCH_PERSONA_DIALOGUE_MENU_TEXT = '魔王城对话形态变化（无视事件）'
   CANDIDATE_DIALOGUE_MENU_TEXT = "魔王城全对话"
   PERSONA_DIALOGUE_VARIABLE_ID = 11
+  RING_RECIPIENT_VARIABLE_ID = 1402
   PERSONA_DIALOGUE_BASE_MENU_TEXTS = [
     'プレゼントをあげる',
     'プレゼントリストを見る',
@@ -92,6 +124,9 @@ module ResearchMod
       { :key => :party_member_max, :label => '队伍编成人数上限', :type => :party_member_max,
         :id => PARTY_MEMBER_MAX_PLUS_VARIABLE_ID, :minimum => PARTY_MEMBER_BASE_MAX,
         :maximum => PARTY_MEMBER_TOTAL_MAX },
+      { :key => :map_follower_count, :label => '地图跟随显示人数',
+        :type => :map_follower_count, :minimum => 0,
+        :maximum => MAP_FOLLOWER_COUNT_MAX },
       { :key => :bf_win_reward, :label => 'BF胜利奖励进度', :type => :variable,
         :id => BF_WIN_REWARD_VARIABLE_ID, :maximum => VALUE_STAT_MAX },
       { :key => :bf_lose_reward, :label => 'BF败北奖励进度', :type => :variable,
@@ -133,6 +168,8 @@ module ResearchMod
       library_party_stat[entry[:id]] || 0
     when :party_member_max
       PARTY_MEMBER_BASE_MAX + $game_variables[entry[:id]].to_i
+    when :map_follower_count
+      map_follower_count
     else
       0
     end
@@ -174,6 +211,8 @@ module ResearchMod
       $game_variables[entry[:id]] = value - PARTY_MEMBER_BASE_MAX
       $game_player.refresh if $game_player
       $game_map.need_refresh = true if $game_map
+    when :map_follower_count
+      set_map_follower_count(value)
     else
       return false
     end
@@ -183,6 +222,32 @@ module ResearchMod
   def self.lewd_soul_count
     item = $data_items[LEWD_SOUL_ITEM_ID]
     item ? $game_party.item_number(item) : 0
+  end
+
+  def self.map_follower_count
+    return MAP_FOLLOWER_COUNT_DEFAULT unless $game_system
+
+    value = $game_system.instance_variable_get(MAP_FOLLOWER_COUNT_KEY)
+    value = MAP_FOLLOWER_COUNT_DEFAULT if value.nil?
+    [[value.to_i, MAP_FOLLOWER_COUNT_MAX].min, 0].max
+  end
+
+  def self.set_map_follower_count(value)
+    return false unless $game_system
+
+    value = [[value.to_i, MAP_FOLLOWER_COUNT_MAX].min, 0].max
+    $game_system.instance_variable_set(MAP_FOLLOWER_COUNT_KEY, value)
+    apply_map_follower_count
+    true
+  end
+
+  def self.apply_map_follower_count
+    return unless $game_player && $game_player.followers
+    return unless $game_player.followers.respond_to?(:research_mod_resize)
+
+    $game_player.followers.research_mod_resize(map_follower_count, $game_player)
+    $game_player.refresh
+    $game_map.need_refresh = true if $game_map
   end
 
   def self.prepare_next_bf_lewd_soul
@@ -318,7 +383,15 @@ module ResearchMod
   end
 
   def self.actor_cutin_file_names(actor)
-    actor_cutin_entries(actor).map { |entry| entry[1] }.uniq
+    return [] unless actor && defined?(NWConst::Actor::SKILL_WORDS)
+
+    actor_id = actor.respond_to?(:word_id) && actor.word_id ? actor.word_id : actor.id
+    word_data = NWConst::Actor::SKILL_WORDS[actor_id]
+    return [] unless word_data.is_a?(Hash)
+
+    names = []
+    collect_actor_cutin_names(word_data, names)
+    names.uniq
   rescue
     []
   end
@@ -395,17 +468,87 @@ module ResearchMod
     ].join("\n")
   end
 
-  def self.author_info_text
-    [
-      '关于',
-      '本研究修改器由作者狗棲制作，主要用于研究、调试和测试游戏内容。',
-      '建议适度使用修改功能；如果所有内容都直接改成必定成功，可能会失去原本的探索、养成和战斗乐趣。',
-      '前章卡圣山：将开关2479「アモス聖山暗転」改为 OFF，即可继续下山。',
-      '终章卡新人类宴会：将变量1150「サラサ空賊団イベント」改为 17，',
-      '然后再与サラサ、爱丽丝对话，即可结束该事件。',
-      '蛭蟲細胞是物品 ID 282，可在按 ID 获取物品中直接输入 282。',
-      '修改剧情开关或变量前，建议先保存存档，并尽量只修改提示中的目标数值。'
-    ].join("\n")
+  def self.audio_overlay_enabled?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(AUDIO_OVERLAY_KEY) == true
+  end
+
+  def self.toggle_audio_overlay
+    enabled = !audio_overlay_enabled?
+    $game_system.instance_variable_set(AUDIO_OVERLAY_KEY, enabled)
+    enabled
+  end
+
+  def self.audio_overlay_channel_signature(audio_class)
+    audio = audio_class.last
+    return ['', 0, 0] unless audio && !audio.name.to_s.empty?
+
+    [audio.name.to_s, audio.volume.to_i, audio.pitch.to_i]
+  rescue
+    ['', 0, 0]
+  end
+
+  def self.current_audio_overlay_signature
+    [audio_overlay_channel_signature(RPG::BGM),
+     audio_overlay_channel_signature(RPG::BGS)]
+  end
+
+def self.author_info_text
+  [
+    '关于',
+    '本研究修改器由作者狗棲制作，主要用于研究、调试和测试游戏内容。',
+    '建议适度使用或者不用修改功能；过度的修改可能会失去游戏乐趣。',
+    '前章卡圣山：将开关2479「アモス聖山暗転」改为 OFF，即可下山。',
+    '建议重新关闭原版不遇敌，关闭开关100「ワープOFFスイッチ」和开关2116「アモス聖山飛び降りフラグ」。',
+    '终章卡新人类宴会：将变量1150「サラサ空賊団イベント」改为 17，',
+    '然后再与サラサ、爱丽丝对话，即可结束该事件。',
+    '蛭蟲細胞是物品 ID 282，可在按 ID 获取物品中直接输入 282。',
+    '修改剧情开关或变量前，建议先保存存档，并尽量只修改提示中的目标数值。'
+  ].join("
+")
+end
+
+
+def self.stuck_help_entries
+  [
+    {
+      :key => :sant_mountain,
+      :label => '圣山',
+      :description => '前章卡圣山：将开关2479「アモス聖山暗転」改为 OFF，即可下山。' + 10.chr +
+        '建议重新关闭原版不遇敌，关闭开关100「ワープOFFスイッチ」和开关2116「アモス聖山飛び降りフラグ」。',
+      :state => on_off($game_switches[STUCK_SANT_MOUNTAIN_SWITCH_ID]),
+      :state_label => switch_text(STUCK_SANT_MOUNTAIN_SWITCH_ID)
+    },
+    {
+      :key => :new_human_banquet,
+      :label => '新人类宴会',
+      :description => '终章卡新人类宴会：将变量1150「サラサ空賊団イベント」设为 17，' + 10.chr +
+        '再与サラサ、爱丽丝对话，即可结束该事件。',
+      :state => $game_variables[STUCK_NEW_HUMAN_VARIABLE_ID].to_i,
+      :state_label => variable_text(STUCK_NEW_HUMAN_VARIABLE_ID)
+    }
+  ]
+end
+
+  def self.stuck_help_entry(key)
+    stuck_help_entries.find { |entry| entry[:key] == key }
+  end
+
+  def self.apply_stuck_help(key)
+    case key
+    when :sant_mountain
+      $game_switches[STUCK_SANT_MOUNTAIN_SWITCH_ID] = false
+      $game_switches[STUCK_SANT_MOUNTAIN_WARP_SWITCH_ID] = false
+      $game_switches[STUCK_SANT_MOUNTAIN_FALL_SWITCH_ID] = false
+      $game_system.encounter_disabled = false if $game_system
+    when :new_human_banquet
+      $game_variables[STUCK_NEW_HUMAN_VARIABLE_ID] = STUCK_NEW_HUMAN_TARGET_VALUE
+    else
+      return false
+    end
+    $game_map.need_refresh = true if $game_map
+    true
   end
 
   def self.persona_entries(actor)
@@ -803,15 +946,16 @@ module ResearchMod
     kind == :switch ? '开关' : '变量'
   end
 
-  def self.debug_known_issue_hint(kind)
-    if kind == :switch
-      '前章卡在アモス聖山：将开关2479「アモス聖山暗転」设为 OFF，即可下山。'
-    else
-      '终章卡在新人类宴会：将变量1150「サラサ空賊団イベント」设为17，再与サラサ、アリス对话。\n' +
-        '戒指事件：变量1401「ルシフィナ指輪イベント」设为0可重复拿戒指，设为1可重复送戒指。\n' +
-        '变量1402「指輪誰に渡したか」记录戒指交给了谁。'
-    end
+def self.debug_known_issue_hint(kind)
+  if kind == :switch
+    '前章卡圣山：将开关2479「アモス聖山暗転」改为 OFF，即可下山。' + 10.chr +
+      '建议重新关闭原版不遇敌，关闭开关100「ワープOFFスイッチ」和开关2116「アモス聖山飛び降りフラグ」。'
+  else
+    '终章卡新人类宴会：将变量1150「サラサ空賊団イベント」设为17，再与サラサ、爱丽丝对话。' + 10.chr +
+      '戒指事件：变量1401「ルシフィナ指輪イベント」设为0可重复拿戒指，设为1可重复送戒指。' + 10.chr +
+      '变量1402「指輪誰に渡したか」记录戒指交给了谁。'
   end
+end
 
   def self.debug_variable_entry_hint(entry_id)
     case entry_id
@@ -1498,6 +1642,38 @@ module ResearchMod
     enabled
   end
 
+  def self.temptation_disabled?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(TEMPTATION_DISABLED_KEY) == true
+  end
+
+  def self.toggle_temptation_disabled
+    enabled = !temptation_disabled?
+    $game_system.instance_variable_set(TEMPTATION_DISABLED_KEY, enabled)
+    enabled
+  end
+
+  def self.lose_event_skip?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(LOSE_EVENT_SKIP_KEY) == true
+  end
+
+  def self.toggle_lose_event_skip
+    enabled = !lose_event_skip?
+    $game_system.instance_variable_set(LOSE_EVENT_SKIP_KEY, enabled)
+    enabled
+  end
+
+  def self.force_lose_event_view?
+    @force_lose_event_view == true
+  end
+
+  def self.force_lose_event_view=(enabled)
+    @force_lose_event_view = enabled == true
+  end
+
   def self.sure_hit_kill?
     return false unless $game_system
 
@@ -1529,6 +1705,102 @@ module ResearchMod
     $game_system.instance_variable_set(THROUGH_MODE_KEY, enabled)
     apply_through_mode
     enabled
+  end
+
+  def self.no_random_encounter?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(NO_RANDOM_ENCOUNTER_KEY) == true
+  end
+
+  def self.toggle_no_random_encounter
+    enabled = !no_random_encounter?
+    $game_system.instance_variable_set(NO_RANDOM_ENCOUNTER_KEY, enabled)
+    $game_player.make_encounter_count if $game_player
+    enabled
+  end
+
+  def self.original_encounter_disabled?
+    return false unless $game_system
+
+    $game_system.encounter_disabled == true
+  end
+
+  def self.toggle_original_encounter_disabled
+    return false unless $game_system
+
+    enabled = !original_encounter_disabled?
+    $game_system.encounter_disabled = enabled
+    $game_player.make_encounter_count if $game_player
+    enabled
+  end
+  def self.enemy_stat_multiplier
+    return ENEMY_STAT_MULTIPLIER_DEFAULT unless $game_system
+
+    value = $game_system.instance_variable_get(ENEMY_STAT_MULTIPLIER_KEY)
+    value = ENEMY_STAT_MULTIPLIER_DEFAULT if value.nil?
+    [[value.to_i, ENEMY_STAT_MULTIPLIER_MAX].min, 0].max
+  end
+
+  def self.experimental_features_enabled?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(EXPERIMENTAL_FEATURES_ENABLED_KEY) == true
+  end
+
+  def self.toggle_experimental_features
+    snapshots = enemy_resource_snapshots
+    enabled = !experimental_features_enabled?
+    $game_system.instance_variable_set(EXPERIMENTAL_FEATURES_ENABLED_KEY, enabled)
+    refresh_enemy_resources(snapshots)
+    enabled
+  end
+
+  def self.enemy_stat_multiplier_effective
+    return 1 unless experimental_features_enabled?
+
+    value = enemy_stat_multiplier
+    value <= 1 ? 1 : value
+  end
+
+  def self.enemy_stat_multiplier_label
+    value = enemy_stat_multiplier
+    return '0（不调整）' if value == 0
+
+    format('%d倍', value)
+  end
+
+  def self.set_enemy_stat_multiplier(value)
+    snapshots = enemy_resource_snapshots
+    value = [[value.to_i, ENEMY_STAT_MULTIPLIER_MAX].min, 0].max
+    $game_system.instance_variable_set(ENEMY_STAT_MULTIPLIER_KEY, value)
+    refresh_enemy_resources(snapshots)
+    value
+  end
+
+  def self.enemy_resource_snapshots
+    return [] unless $game_troop
+
+    $game_troop.members.compact.map do |enemy|
+      [enemy, enemy.hp, enemy.mhp, enemy.mp, enemy.mmp]
+    end
+  end
+
+  def self.refresh_enemy_resources(snapshots)
+    snapshots.each do |enemy, old_hp, old_mhp, old_mp, old_mmp|
+      enemy.refresh
+      new_hp = old_mhp.to_i > 0 ? old_hp.to_i * enemy.mhp / old_mhp.to_i : old_hp
+      new_mp = old_mmp.to_i > 0 ? old_mp.to_i * enemy.mmp / old_mmp.to_i : old_mp
+      enemy.hp = [[new_hp, enemy.mhp].min, 0].max
+      enemy.mp = [[new_mp, enemy.mmp].min, 0].max
+    end
+  end
+
+  def self.apply_enemy_stat_multiplier(value)
+    multiplier = enemy_stat_multiplier_effective
+    return value if multiplier == 1
+
+    (value * multiplier).to_i
   end
 
   def self.prevent_event_luca_front?
@@ -1588,6 +1860,18 @@ module ResearchMod
     enabled
   end
 
+  def self.battle_cutin_view?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(BATTLE_CUTIN_VIEW_KEY) == true
+  end
+
+  def self.toggle_battle_cutin_view
+    enabled = !battle_cutin_view?
+    $game_system.instance_variable_set(BATTLE_CUTIN_VIEW_KEY, enabled)
+    enabled
+  end
+
   def self.battle_record_enabled?
     return false unless $game_system
 
@@ -1599,6 +1883,75 @@ module ResearchMod
     $game_system.instance_variable_set(BATTLE_RECORD_KEY, enabled)
     clear_battle_records unless enabled
     enabled
+  end
+
+  def self.battle_editor_enabled?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(BATTLE_EDITOR_KEY) == true
+  end
+
+  def self.toggle_battle_editor
+    enabled = !battle_editor_enabled?
+    $game_system.instance_variable_set(BATTLE_EDITOR_KEY, enabled)
+    enabled
+  end
+
+  def self.temptation_immunity?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(TEMPTATION_IMMUNITY_KEY) == true
+  end
+
+  def self.toggle_temptation_immunity
+    enabled = !temptation_immunity?
+    $game_system.instance_variable_set(TEMPTATION_IMMUNITY_KEY, enabled)
+    clear_battle_temptation if enabled
+    enabled
+  end
+
+  def self.battle_party_members
+    return [] unless $game_party
+
+    $game_party.battle_members.compact.select do |battler|
+      battler.respond_to?(:exist?) && battler.exist? && battler.alive?
+    end
+  end
+
+  def self.battle_enemy_members
+    return [] unless $game_troop
+
+    $game_troop.members.compact.select do |battler|
+      battler.respond_to?(:exist?) && battler.exist? && battler.alive?
+    end
+  end
+
+  def self.battle_all_members
+    (battle_party_members + battle_enemy_members).uniq
+  end
+
+  def self.clear_battle_temptation
+    battle_all_members.each do |battler|
+      battler.remove_state(TEMPTATION_STATE_ID) if battler.state?(TEMPTATION_STATE_ID)
+    end
+  end
+
+  def self.force_add_battle_state(battler, state_id)
+    return false unless battler && battler.alive?
+    return false unless $data_states[state_id]
+    return false if state_id == TEMPTATION_STATE_ID && temptation_immunity?
+
+    battler.add_new_state(state_id) unless battler.state?(state_id)
+    battler.reset_state_counts(state_id)
+    battler.refresh
+    true
+  end
+
+  def self.force_remove_battle_state(battler, state_id)
+    return false unless battler && battler.state?(state_id)
+
+    battler.remove_state(state_id)
+    true
   end
 
   def self.battle_records
@@ -1652,6 +2005,18 @@ module ResearchMod
     []
   end
 
+  def self.enemy_all_cutin_file_names(enemy)
+    return [] unless enemy && enemy.respond_to?(:skill_word_hash)
+
+    names = []
+    enemy.skill_word_hash.each_value do |word_data|
+      collect_enemy_cutin_names(word_data, names) if word_data.is_a?(Hash)
+    end
+    names.uniq
+  rescue
+    []
+  end
+
   def self.collect_enemy_cutin_names(value, names)
     if value.is_a?(Hash)
       value.each do |key, nested|
@@ -1692,6 +2057,586 @@ module ResearchMod
 
   def self.enemy_dialogue_word_lines(word)
     Array(word.instance_variable_get(:@words)).map(&:to_s)
+  end
+
+  def self.expanded_dialogue_word_lines(word)
+    enemy_dialogue_word_lines(word).each_with_object([]) do |raw_line, lines|
+      raw_line.split(/\\n|\r\n|\r|\n/).each { |line| lines << line }
+    end
+  rescue
+    enemy_dialogue_word_lines(word)
+  end
+
+  def self.expanded_dialogue_word(word)
+    expanded_word = Marshal.load(Marshal.dump(word))
+    expanded_word.instance_variable_set(:@words, expanded_dialogue_word_lines(expanded_word))
+    expanded_word
+  rescue
+    word
+  end
+
+  def self.skill_temptation_message_words(skill, user_name, target_name)
+    return [] unless skill
+
+    [skill.instance_variable_get(:@message1),
+     skill.instance_variable_get(:@message2)].each_with_index.each_with_object([]) do |entry, words|
+      message, index = entry
+      text = message.to_s
+      next if text.empty?
+
+      if text =~ /\\(u|e)/i
+        text = text.gsub(/\\U/i, user_name.to_s).gsub(/\\E/i, target_name.to_s)
+      elsif index == 0
+        text = user_name.to_s + text
+      end
+      words << Word.new(text, '', 0)
+    end
+  rescue
+    []
+  end
+
+  def self.battle_dialogue_protagonist_name
+    if defined?($game_actors) && $game_actors && $game_actors[1]
+      name = $game_actors[1].name.to_s
+      return name unless name.empty?
+    end
+    'ルカ'
+  rescue
+    'ルカ'
+  end
+
+  def self.battle_dialogue_first_sentence(lines)
+    parts = Array(lines).map(&:to_s).map(&:strip).reject(&:empty?)
+    parts.shift if parts.first && parts.first =~ /\A【.*】\z/
+    text = parts.first.to_s
+    text = text.split(/(?<=[。！？!?])/, 2).first.to_s
+    text.empty? ? '(无文字)' : text
+  rescue
+    '(无法显示的台词)'
+  end
+
+  def self.battle_dialogue_question_text(lines)
+    parts = Array(lines).map(&:to_s).map(&:strip).reject(&:empty?)
+    parts.reject! { |line| line =~ /\A【.*】\z/ }
+    parts.last.to_s
+  rescue
+    ''
+  end
+
+  def self.battle_dialogue_display_text(text, maximum = nil)
+    display_text = text.to_s.gsub(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/, ' ')
+    display_text = display_text.gsub('\\', '＼').gsub(/[\r\n\t]+/, ' ')
+    display_text = display_text.gsub(/\s+/, ' ').strip
+    if maximum && display_text.size > maximum
+      display_text = display_text[0, maximum - 1] + '…'
+    end
+    display_text
+  rescue
+    '(无法显示的台词)'
+  end
+
+  def self.mtool_active?
+    return @research_mod_mtool_active unless @research_mod_mtool_active.nil?
+
+    get_module_handle = Win32API.new('kernel32', 'GetModuleHandleA', 'p', 'l')
+    @research_mod_mtool_active = get_module_handle.call('RGSSHook.dll') != 0
+  rescue
+    @research_mod_mtool_active = false
+  end
+
+  def self.battle_dialogue_help_lines(lines)
+    display_lines = Array(lines).each_with_object([]) do |line, result|
+      line.to_s.split(/[\r\n]+/).each do |part|
+        text = battle_dialogue_display_text(part, 90)
+        result << text unless text.empty?
+      end
+    end
+    omitted = display_lines.size > 3
+    display_lines = display_lines.first(3)
+    display_lines[-1] += '（后续省略）' if omitted && !display_lines.empty?
+    display_lines.empty? ? ['(无文字)'] : display_lines
+  rescue
+    ['(无法显示的台词)']
+  end
+
+  def self.battler_dialogue_id(battler)
+    return battler.actor_id if battler.respond_to?(:actor_id)
+    return battler.enemy_id if battler.respond_to?(:enemy_id)
+
+    battler.id
+  rescue
+    0
+  end
+
+  def self.actor_talk_dialogue_entries(actor)
+    return [] unless actor
+
+    word_hash = actor.respond_to?(:skill_word_hash) ? actor.skill_word_hash : nil
+    return [] unless word_hash.is_a?(Hash)
+
+    entries = []
+    word_hash.each do |skill_key, word_data|
+      begin
+        next unless word_data.is_a?(Hash)
+        next unless enemy_dialogue_skill_ids(skill_key).include?(2109)
+
+        skill = $data_skills[2109]
+        skill_name = skill && !skill.name.to_s.empty? ? skill.name : '話し掛ける'
+        NWConst::Actor.create_skill_words(word_data).each_with_index do |word, word_index|
+          lines = enemy_dialogue_word_lines(word)
+          entries << {
+            :category => '我方搭话',
+            :skill_id => 2109,
+            :skill_name => skill_name,
+            :word_index => word_index + 1,
+            :preview => lines.join(' ').strip,
+            :lines => lines,
+            :word => word
+          }
+        end
+      rescue
+        next
+      end
+    end
+    entries
+  rescue
+    []
+  end
+
+  def self.talk_initiator_dialogue_entries(battler)
+    return [] unless battler
+
+    if battler.respond_to?(:enemy_id)
+      enemy_dialogue_entries(battler, :special).select do |entry|
+        entry[:skill_id].to_i == 2109
+      end
+    else
+      actor_talk_dialogue_entries(battler)
+    end
+  rescue
+    []
+  end
+
+  def self.actor_skill_dialogue_entries(actor, learned_only = true)
+    return [] unless actor
+
+    word_hash = if actor.respond_to?(:skill_word_hash)
+                  actor.skill_word_hash
+                elsif defined?(NWConst::Actor::SKILL_WORDS)
+                  actor_id = actor.respond_to?(:word_id) && actor.word_id ? actor.word_id : actor.id
+                  NWConst::Actor::SKILL_WORDS[actor_id]
+                end
+    return [] unless word_hash.is_a?(Hash)
+
+    entries = []
+    learned_skill_ids = if learned_only && actor.respond_to?(:skills)
+                          actor.skills.map(&:id)
+                        end
+    word_hash.each do |skill_key, word_data|
+      begin
+        next unless word_data.is_a?(Hash)
+
+        skill_ids = enemy_dialogue_skill_ids(skill_key)
+        skill_ids &= learned_skill_ids if learned_skill_ids
+        next if skill_ids.empty?
+
+        skill = skill_ids.map { |skill_id| $data_skills[skill_id] }.compact.find do |entry|
+          !entry.name.to_s.empty?
+        end
+        skill_id = skill ? skill.id : skill_ids.first
+        skill_name = skill ? skill.name : '未命名技能'
+        skill_names = skill_ids.map { |skill_id| $data_skills[skill_id] }.compact.map do |entry|
+          entry.name.to_s
+        end.reject(&:empty?).uniq
+        skill_names = [skill_name] if skill_names.empty?
+        NWConst::Actor.create_skill_words(word_data).each_with_index do |word, word_index|
+          lines = enemy_dialogue_word_lines(word)
+          preview = lines.join(' ').strip
+          preview = '(无文字)' if preview.empty?
+          entries << {
+            :category => '我方技能台词',
+            :skill_id => skill_id,
+            :skill_ids => skill_ids,
+            :skill_name => skill_name,
+            :skill_names => skill_names,
+            :word_index => word_index + 1,
+            :preview => preview,
+            :lines => lines,
+            :word => word
+          }
+        end
+      rescue
+        next
+      end
+    end
+    entries
+  rescue
+    []
+  end
+
+  def self.hero_skill_dialogue_entry?(entry)
+    return false unless entry && entry[:skill_id]
+
+    skill = $data_skills[entry[:skill_id]] if $data_skills
+    return false unless skill
+
+    if skill.respond_to?(:stypes)
+      skill.stypes.include?(HERO_SKILL_TYPE_ID)
+    else
+      skill.stype_id.to_i == HERO_SKILL_TYPE_ID
+    end
+  rescue
+    false
+  end
+
+  def self.skill_type_dialogue_entries(battler, skill_type_id, category)
+    return [] unless battler
+
+    entries = if battler.respond_to?(:enemy_id)
+                enemy_dialogue_entries(battler, :all_skills)
+              else
+                actor_skill_dialogue_entries(battler, false)
+              end
+    entries.map do |entry|
+      skill_ids = entry[:skill_ids].is_a?(Array) ? entry[:skill_ids] : [entry[:skill_id]]
+      matched_skills = skill_ids.map { |skill_id| $data_skills[skill_id] }.compact.select do |skill|
+        if skill.respond_to?(:stypes)
+          skill.stypes.include?(skill_type_id)
+        else
+          skill.stype_id.to_i == skill_type_id
+        end
+      end
+      next if matched_skills.empty?
+
+      type_entry = entry.dup
+      names = matched_skills.map { |skill| skill.name.to_s }.reject(&:empty?).uniq
+      names = [entry[:skill_name].to_s] if names.empty?
+      type_entry[:category] = category
+      type_entry[:skill_name] = names.first.to_s + (names.size > 1 ? '等' : '')
+      type_entry
+    end.compact
+  rescue
+    []
+  end
+
+  def self.skill_id_dialogue_entries(battler, target_skill_ids, category)
+    return [] unless battler
+
+    entries = if battler.respond_to?(:enemy_id)
+                enemy_dialogue_entries(battler, :all_skills)
+              else
+                actor_skill_dialogue_entries(battler, false)
+              end
+    entries.map do |entry|
+      skill_ids = entry[:skill_ids].is_a?(Array) ? entry[:skill_ids] : [entry[:skill_id]]
+      matched_skills = skill_ids.select do |skill_id|
+        target_skill_ids.include?(skill_id.to_i)
+      end.map { |skill_id| $data_skills[skill_id] }.compact
+      next if matched_skills.empty?
+
+      type_entry = entry.dup
+      names = matched_skills.map { |skill| skill.name.to_s }.reject(&:empty?).uniq
+      names = [entry[:skill_name].to_s] if names.empty?
+      type_entry[:category] = category
+      type_entry[:skill_name] = names.first.to_s + (names.size > 1 ? '等' : '')
+      type_entry
+    end.compact
+  rescue
+    []
+  end
+
+  def self.transformation_skill_dialogue_entries(battler)
+    skill_id_dialogue_entries(battler, TRANSFORMATION_SKILL_IDS, '变身类')
+  end
+
+  def self.hero_skill_dialogue_entries(battler)
+    skill_type_dialogue_entries(battler, HERO_SKILL_TYPE_ID, 'ヒーロー技')
+  end
+
+  def self.dance_skill_dialogue_entries(battler)
+    skill_type_dialogue_entries(battler, DANCE_SKILL_TYPE_ID, '踊る')
+  end
+
+  def self.sing_skill_dialogue_entries(battler)
+    skill_type_dialogue_entries(battler, SING_SKILL_TYPE_ID, '歌う')
+  end
+
+  def self.actor_playful_dialogue_entries(actor)
+    return [] unless actor
+
+    commands = playful_actor_event_commands(actor)
+    return [] if commands.empty?
+
+    skill = $data_skills[PLAYFUL_DIALOGUE_SKILL_ID]
+    skill_name = skill && !skill.name.to_s.empty? ? skill.name : '遊ぶ'
+    playful_actor_outcomes(commands).each_with_object([]) do |outcome, entries|
+      groups = event_message_groups(outcome[:commands])
+      next if groups.empty?
+
+      words = groups.map do |group|
+        lines = group[:lines].map(&:to_s)
+        Word.new(lines.join(10.chr), group[:face_name].to_s,
+                 group[:face_index].to_i)
+      end
+      lines = groups.each_with_object([]) do |group, result|
+        result.concat(group[:lines].map(&:to_s))
+      end
+      entries << {
+        :category => '爱玩',
+        :skill_id => PLAYFUL_DIALOGUE_SKILL_ID,
+        :skill_name => skill_name,
+        :word_index => outcome[:index],
+        :preview => lines.join(' ').strip,
+        :lines => lines,
+        :word => words.first,
+        :words => words
+      }
+    end
+  rescue
+    []
+  end
+
+  def self.playful_actor_outcomes(commands)
+    outcomes = []
+    current = nil
+    Array(commands).each do |command|
+      code = command.instance_variable_get(:@code)
+      indent = command.instance_variable_get(:@indent).to_i
+      params = Array(command.instance_variable_get(:@parameters))
+      if code == 111 && indent == 1 && params[0, 3] == [1, 11, 0]
+        outcomes << current if current
+        current = { :index => params[3].to_i, :commands => [] }
+      elsif current && code == 412 && indent == 1
+        outcomes << current
+        current = nil
+      elsif current
+        current[:commands] << command
+      end
+    end
+    outcomes << current if current
+    return outcomes unless outcomes.empty?
+
+    [{ :index => 1, :commands => Array(commands) }]
+  end
+
+  def self.playful_actor_event_commands(actor)
+    return [] unless actor && $data_common_events
+
+    actor_id = actor.respond_to?(:actor_id) ? actor.actor_id : actor.id
+    PLAYFUL_COMMON_EVENT_RANGE.each do |common_event_id|
+      common_event = $data_common_events[common_event_id]
+      next unless common_event
+
+      list = Array(common_event.instance_variable_get(:@list))
+      start_index = list.index do |command|
+        command.instance_variable_get(:@code) == 111 &&
+          command.instance_variable_get(:@indent).to_i == 0 &&
+          command.instance_variable_get(:@parameters) ==
+            [1, PLAYFUL_ACTOR_VARIABLE_ID, 0, actor_id, 0]
+      end
+      next unless start_index
+
+      finish_index = (start_index + 1...list.size).find do |index|
+        command = list[index]
+        params = Array(command.instance_variable_get(:@parameters))
+        command.instance_variable_get(:@code) == 111 &&
+          command.instance_variable_get(:@indent).to_i == 0 &&
+          params[0, 2] == [1, PLAYFUL_ACTOR_VARIABLE_ID]
+      end || list.size
+      return list[(start_index + 1)...finish_index]
+    end
+    []
+  rescue
+    []
+  end
+
+  def self.actor_temptation_dialogue_entries(actor)
+    return [] unless actor
+
+    word_hash = if actor.respond_to?(:skill_word_hash)
+                  actor.skill_word_hash
+                elsif defined?(NWConst::Actor::SKILL_WORDS)
+                  actor_id = actor.respond_to?(:word_id) && actor.word_id ? actor.word_id : actor.id
+                  NWConst::Actor::SKILL_WORDS[actor_id]
+                end
+    return [] unless word_hash.is_a?(Hash)
+
+    entries = []
+    word_hash.each do |skill_key, word_data|
+      begin
+        next unless word_data.is_a?(Hash)
+
+        skill_ids = enemy_dialogue_skill_ids(skill_key)
+        next if skill_ids.empty?
+
+        skill = skill_ids.map { |skill_id| $data_skills[skill_id] }.compact.find do |entry|
+          !entry.name.to_s.empty?
+        end
+        skill_id = skill ? skill.id : skill_ids.first
+        skill_name = skill ? skill.name : '未命名技能'
+        words = NWConst::Actor.create_skill_words(word_data).select do |word|
+          word.respond_to?(:condition) && word.condition == :temptation?
+        end
+        words.each_with_index do |word, word_index|
+          playback_word = expanded_dialogue_word(word)
+          message_words = skill_temptation_message_words(skill, actor.name, '目标')
+          all_words = [playback_word] + message_words
+          all_lines = all_words.each_with_object([]) do |entry_word, result|
+            result.concat(expanded_dialogue_word_lines(entry_word))
+          end
+          preview = battle_dialogue_first_sentence(all_lines)
+          entries << {
+            :category => '誘惑反应',
+            :skill_id => skill_id,
+            :skill_name => skill_name,
+            :word_index => word_index + 1,
+            :preview => preview,
+            :lines => all_lines,
+            :word => all_words.first,
+            :words => all_words
+          }
+        end
+      rescue
+        next
+      end
+    end
+    entries
+  rescue
+    []
+  end
+
+  def self.enemy_base_data(enemy)
+    data = enemy.respond_to?(:enemy) ? enemy.enemy : nil
+    data = data.base_enemy if data && data.respond_to?(:base_enemy)
+    data
+  rescue
+    nil
+  end
+
+  def self.milking_common_event_block(enemy)
+    return [] unless enemy && $data_common_events
+
+    common_event = $data_common_events[MILKING_COMMON_EVENT_ID]
+    return [] unless common_event
+
+    base_enemy = enemy_base_data(enemy)
+    enemy_id = base_enemy && base_enemy.respond_to?(:id) ? base_enemy.id : enemy.enemy_id
+    list = Array(common_event.instance_variable_get(:@list))
+    start_index = list.index do |command|
+      command.instance_variable_get(:@code) == 111 &&
+        command.instance_variable_get(:@indent).to_i == 0 &&
+        command.instance_variable_get(:@parameters) == [1, 12, 0, enemy_id, 0]
+    end
+    return [] unless start_index
+
+    finish_index = (start_index + 1...list.size).find do |index|
+      command = list[index]
+      command.instance_variable_get(:@code) == 111 &&
+        command.instance_variable_get(:@indent).to_i == 0
+    end || list.size
+    list[start_index...finish_index]
+  rescue
+    []
+  end
+
+  def self.event_message_groups(commands)
+    groups = []
+    current = nil
+    Array(commands).each do |command|
+      code = command.instance_variable_get(:@code)
+      params = command.instance_variable_get(:@parameters)
+      if code == 101
+        groups << current if current && !current[:lines].empty?
+        current = {
+          :face_name => params[0].to_s,
+          :face_index => params[1].to_i,
+          :indent => command.instance_variable_get(:@indent).to_i,
+          :lines => []
+        }
+      elsif code == 401 && current
+        current[:lines] << params[0].to_s
+      elsif current && !current[:lines].empty?
+        groups << current
+        current = nil
+      end
+    end
+    groups << current if current && !current[:lines].empty?
+    groups
+  end
+
+  def self.milking_reaction_entries(enemy)
+    block = milking_common_event_block(enemy)
+    return [] if block.empty?
+
+    base_enemy = enemy_base_data(enemy)
+    base_name = base_enemy && base_enemy.respond_to?(:name) ? base_enemy.name.to_s : ''
+    current_name = enemy.name.to_s
+    groups = event_message_groups(block)
+    reaction = groups.find { |group| !group[:face_name].empty? }
+    failure = groups.reverse.find do |group|
+      group[:lines].any? { |line| line.include?('搾れなかった') }
+    end
+    failure ||= groups.last if groups.size > 1 && groups.last[:face_name].empty?
+    result = []
+    if reaction
+      lines = reaction[:lines].map do |line|
+        base_name.empty? ? line : line.gsub(base_name, current_name)
+      end
+      word = Word.new(lines.join(92.chr + 'n'), reaction[:face_name],
+                      reaction[:face_index], enemy.battler_hue)
+      result << {
+        :category => '乳搾り成功反应', :skill_id => nil,
+        :skill_name => '乳搾り成功', :word_index => 1,
+        :preview => lines.join(' '), :lines => lines, :word => word
+      }
+    end
+    if failure
+      lines = failure[:lines]
+      word = Word.new(lines.join(92.chr + 'n'), failure[:face_name],
+                      failure[:face_index], enemy.battler_hue)
+      result << {
+        :category => '乳搾り失败', :skill_id => nil,
+        :skill_name => '乳搾り失败', :word_index => 1,
+        :preview => lines.join(' '), :lines => lines, :word => word
+      }
+    end
+    result
+  rescue
+    []
+  end
+
+  def self.battler_reaction_entries(battler)
+    return [] unless battler
+
+    entries = []
+    if battler.respond_to?(:enemy_id)
+      entries.concat(milking_reaction_entries(battler))
+      entries.concat(enemy_dialogue_entries(battler, :down))
+    elsif battler.respond_to?(:down_word_hash) && battler.down_word_hash
+      reaction_types = {
+        :dead_word => '普通击败', :orgasm_word => '快乐击败',
+        :predation_word => '捕食击败', :incontinence_word => '失禁异常'
+      }
+      reaction_types.each do |word_key, category|
+        begin
+          word_data = battler.down_word_hash[word_key]
+          word = battler.create_down_word(word_data) if word_data
+          next unless word
+
+          lines = enemy_dialogue_word_lines(word)
+          entries << {
+            :category => category, :skill_id => nil, :skill_name => category,
+            :word_index => 1, :preview => lines.join(' '), :lines => lines,
+            :word => word
+          }
+        rescue
+          next
+        end
+      end
+    end
+    entries
+  rescue
+    []
   end
 
   def self.enemy_special_common_event_entries(enemy)
@@ -1755,7 +2700,7 @@ module ResearchMod
     end
     messages << current if current && !current[:lines].empty?
 
-    category = "話し掛け回应"
+    category = '对话回应'
     messages.each_with_index.map do |message, index|
       word = Word.new(message[:lines].join("\\n"), message[:face_name],
                       message[:face_index], enemy.battler_hue)
@@ -1768,6 +2713,147 @@ module ResearchMod
         :lines => message[:lines],
         :word => word
       }
+    end
+  rescue
+    []
+  end
+
+  def self.enemy_choice_response_entries(enemy)
+    return [] unless enemy && $data_common_events
+
+    enemy_data = enemy.respond_to?(:enemy) ? enemy.enemy : nil
+    base_enemy = if enemy_data && enemy_data.respond_to?(:base_enemy)
+                   enemy_data.base_enemy
+                 else
+                   enemy_data
+                 end
+    dialogue_enemy_id = base_enemy.id if base_enemy && base_enemy.respond_to?(:id)
+    unless dialogue_enemy_id.is_a?(Integer)
+      dialogue_enemy_id = enemy.enemy_id if enemy.respond_to?(:enemy_id)
+      dialogue_enemy_id -= 1000 if (1001..2000).include?(dialogue_enemy_id)
+      dialogue_enemy_id -= 2000 if (2001..3000).include?(dialogue_enemy_id)
+    end
+    return [] unless dialogue_enemy_id.is_a?(Integer)
+
+    common_event = $data_common_events[1000 + dialogue_enemy_id]
+    return [] unless common_event
+
+    base_name = base_enemy && base_enemy.respond_to?(:name) ? base_enemy.name.to_s : ''
+    current_name = enemy.respond_to?(:name) ? enemy.name.to_s : ''
+    commands = Array(common_event.instance_variable_get(:@list))
+    branches = []
+    active_branches = {}
+    choice_prompts = {}
+    choice_group_index = 0
+    last_group = nil
+    last_group_owner = nil
+    index = 0
+    while index < commands.size
+      command = commands[index]
+      code = command.instance_variable_get(:@code)
+      indent = command.instance_variable_get(:@indent).to_i
+      params = Array(command.instance_variable_get(:@parameters))
+      if code == 101
+        group = {
+          :face_name => params[0].to_s,
+          :face_index => params[1].to_i,
+          :lines => []
+        }
+        line_index = index + 1
+        while line_index < commands.size &&
+              commands[line_index].instance_variable_get(:@code) == 401
+          line_params = Array(commands[line_index].instance_variable_get(:@parameters))
+          line = line_params[0].to_s
+          line = line.gsub(base_name, current_name) unless base_name.empty? || current_name.empty?
+          group[:lines] << line
+          line_index += 1
+        end
+        active_levels = active_branches.keys.select { |level| level < indent }.sort
+        owner = active_levels.empty? ? nil : active_branches[active_levels.last]
+        owner[:responses] << group if owner
+        last_group = group
+        last_group_owner = owner
+        index = line_index
+        next
+      elsif code == 102
+        if last_group_owner && last_group_owner[:responses].last.equal?(last_group)
+          last_group_owner[:responses].pop
+        end
+        choice_group_index += 1
+        last_group[:choice_group_index] = choice_group_index if last_group
+        last_group[:choice_position] = params[2].to_i if last_group
+        last_group[:choice_background] = params[3].to_i if last_group
+        choice_prompts[indent] = last_group
+        last_group = nil
+        last_group_owner = nil
+      elsif code == 402 || code == 403
+        active_branches.delete_if { |level, _branch| level >= indent }
+        parent_levels = active_branches.keys.select { |level| level < indent }.sort
+        label = code == 402 ? params[1].to_s : '取消'
+        path = parent_levels.map { |level| active_branches[level][:label] }
+        prompt_levels = (parent_levels + [indent]).uniq
+        branch = {
+          :label => label,
+          :path => path + [label],
+          :prompts => prompt_levels.map { |level| choice_prompts[level] }.compact,
+          :choice_group_index => choice_prompts[indent] ? choice_prompts[indent][:choice_group_index] : nil,
+          :choice_position => choice_prompts[indent] ? choice_prompts[indent][:choice_position] : 2,
+          :choice_background => choice_prompts[indent] ? choice_prompts[indent][:choice_background] : 0,
+          :responses => []
+        }
+        branches << branch
+        active_branches[indent] = branch
+        last_group = nil
+        last_group_owner = nil
+      elsif code == 404
+        active_branches.delete_if { |level, _branch| level >= indent }
+        choice_prompts.delete_if { |level, _prompt| level >= indent }
+        last_group = nil
+        last_group_owner = nil
+      else
+        last_group = nil unless code == 401
+        last_group_owner = nil unless code == 401
+      end
+      index += 1
+    end
+
+    entries = []
+    branches.each do |branch|
+      next if branch[:responses].empty?
+
+      groups = branch[:prompts] + branch[:responses]
+      words = groups.map do |group|
+        Word.new(group[:lines].join(10.chr), group[:face_name],
+                 group[:face_index], enemy.battler_hue)
+      end
+      lines = groups.each_with_object([]) do |group, result|
+        result.concat(group[:lines])
+      end
+      choice_label = branch[:path].join(' → ')
+      entries << {
+        :category => '选项回应',
+        :skill_id => nil,
+        :skill_name => common_event.instance_variable_get(:@name).to_s,
+        :word_index => entries.size + 1,
+        :choice_label => choice_label,
+        :choice_group_index => branch[:choice_group_index],
+        :choice_position => branch[:choice_position],
+        :choice_background => branch[:choice_background],
+        :preview => battle_dialogue_first_sentence(branch[:responses].first[:lines]),
+        :lines => lines,
+        :word => words.first,
+        :words => words,
+        :prompt_words => words[0, branch[:prompts].size] || [],
+        :response_words => words[branch[:prompts].size..-1] || []
+      }
+    end
+    return entries unless entries.empty?
+
+    enemy_special_common_event_entries(enemy).each_with_index.map do |entry, fallback_index|
+      fallback = entry.dup
+      fallback[:category] = '选项回应'
+      fallback[:choice_label] = format('无法识别的选项（候选%d）', fallback_index + 1)
+      fallback
     end
   rescue
     []
@@ -1799,6 +2885,8 @@ module ResearchMod
             skill_ids &= available_skill_ids
           elsif mode == :special
             skill_ids &= SPECIAL_ENEMY_DIALOGUE_SKILL_IDS
+          elsif mode == :playful
+            skill_ids &= [PLAYFUL_DIALOGUE_SKILL_ID]
           end
           next if skill_ids.empty?
 
@@ -1807,24 +2895,55 @@ module ResearchMod
           end
           skill_id = skill ? skill.id : skill_ids.first
           skill_name = skill ? skill.name : '未命名技能'
+          skill_names = skill_ids.map { |skill_id| $data_skills[skill_id] }.compact.map do |entry|
+            entry.name.to_s
+          end.reject(&:empty?).uniq
+          skill_names = [skill_name] if skill_names.empty?
           words = NWConst::Actor.create_skill_words(word_data).select do |word|
-            enemy.word_conditions_met?(word)
+            if mode == :temptation
+              word.respond_to?(:condition) && word.condition == :temptation?
+            else
+              enemy.word_conditions_met?(word)
+            end
           end
           words.each_with_index do |word, word_index|
             converted = enemy.create_skill_words(word)
             next unless converted
 
-            lines = enemy_dialogue_word_lines(converted)
-            preview = lines.join(' ').strip
-            preview = '(无文字)' if preview.empty?
+            playback_word = mode == :temptation ?
+                            expanded_dialogue_word(converted) : converted
+            lines = mode == :temptation ?
+                    expanded_dialogue_word_lines(playback_word) :
+                    enemy_dialogue_word_lines(playback_word)
+            if mode == :temptation
+              message_words = skill_temptation_message_words(
+                skill, enemy.name, battle_dialogue_protagonist_name
+              )
+              all_words = [playback_word] + message_words
+              lines = all_words.each_with_object([]) do |entry_word, result|
+                result.concat(expanded_dialogue_word_lines(entry_word))
+              end
+            else
+              all_words = [playback_word]
+            end
+            preview = battle_dialogue_first_sentence(lines)
             entries << {
-              :category => '技能台词',
+              :category => if mode == :playful
+                             '爱玩'
+                           elsif mode == :temptation
+                             '誘惑反应'
+                           else
+                             '技能台词'
+                           end,
               :skill_id => skill_id,
+              :skill_ids => skill_ids,
               :skill_name => skill_name,
+              :skill_names => skill_names,
               :word_index => word_index + 1,
               :preview => preview,
               :lines => lines,
-              :word => converted
+              :word => all_words.first,
+              :words => all_words
             }
           end
         rescue
@@ -2001,19 +3120,103 @@ module ResearchMod
     blocks
   end
 
-  def self.candidate_dialogue_entries(list, choice_index)
-    return [] unless list && choice_index
+  def self.candidate_dialogue_actor_jump_index(list, choice_index)
+    return nil unless list && choice_index
 
-    actor_label_jump_index = nil
     upper_bound = [choice_index, list.size].min - 1
     upper_bound.downto(0) do |index|
       command = list[index]
       next unless candidate_dialogue_command?(command, 355)
       next unless command.parameters[0].to_s.strip == 'actor_label_jump'
 
-      actor_label_jump_index = index
-      break
+      return index
     end
+    nil
+  end
+
+  def self.ring_dialogue_condition?(command)
+    return false unless candidate_dialogue_command?(command, 111)
+
+    parameters = command.parameters
+    parameters[0].to_i == 1 &&
+      parameters[1].to_i == RING_RECIPIENT_VARIABLE_ID &&
+      parameters[2].to_i == 0 && parameters[4].to_i == 0
+  end
+
+  def self.ring_dialogue_branch_end(list, condition_index, upper_bound)
+    condition = list[condition_index]
+    indent = condition.indent
+    index = condition_index + 1
+    while index < upper_bound
+      command = list[index]
+      if command.indent == indent && (command.code == 411 || command.code == 412)
+        return index
+      end
+      index += 1
+    end
+    upper_bound
+  end
+
+  def self.ring_dialogue_preview(blocks)
+    lines = blocks.flat_map { |block| block[:lines] }
+    preview = lines.find { |line| line !~ /^【.*】/ }.to_s
+    preview = lines.first.to_s if preview.empty?
+    preview.size > 28 ? preview[0, 28] + '…' : preview
+  end
+
+  def self.ring_dialogue_entries(list, choice_index)
+    actor_jump_index = candidate_dialogue_actor_jump_index(list, choice_index)
+    return [] unless actor_jump_index
+
+    entries = []
+    (0...actor_jump_index).each do |index|
+      command = list[index]
+      next unless ring_dialogue_condition?(command)
+
+      end_index = ring_dialogue_branch_end(list, index, actor_jump_index)
+      blocks = candidate_dialogue_text_blocks(list, index + 1, end_index)
+      next if blocks.empty?
+
+      ring_value = command.parameters[3].to_i
+      entries << {
+        :ring_value => ring_value,
+        :name => format('戒指对象%d：%s', ring_value,
+                        ring_dialogue_preview(blocks)),
+        :blocks => blocks
+      }
+    end
+    entries.uniq do |entry|
+      [entry[:ring_value], entry[:blocks].map { |block| block[:lines] }]
+    end
+  rescue
+    []
+  end
+
+  def self.candidate_dialogue_actor_name(actor_id, blocks)
+    actor = $data_actors[actor_id]
+    name = actor ? actor.name.to_s : ''
+    return name unless name.empty?
+
+    if defined?($game_actors) && $game_actors && $game_actors[actor_id]
+      name = $game_actors[actor_id].name.to_s
+      return name unless name.empty?
+    end
+
+    blocks.each do |block|
+      block[:lines].each do |line|
+        match = line.to_s.match(/^【([^】]+)】/)
+        return match[1] if match
+      end
+    end
+    "Actor #{actor_id}"
+  rescue
+    "Actor #{actor_id}"
+  end
+
+  def self.candidate_dialogue_entries(list, choice_index)
+    return [] unless list && choice_index
+
+    actor_label_jump_index = candidate_dialogue_actor_jump_index(list, choice_index)
     return [] unless actor_label_jump_index
 
     entries = []
@@ -2062,11 +3265,9 @@ module ResearchMod
       blocks = candidate_dialogue_text_blocks(list, label_index + 1, end_index)
       next if blocks.empty?
 
-      actor = $data_actors[actor_id]
-      name = actor ? actor.name.to_s : "Actor #{actor_id}"
       entries << {
         :actor_id => actor_id,
-        :name => name,
+        :name => candidate_dialogue_actor_name(actor_id, blocks),
         :blocks => blocks
       }
     end
@@ -2114,17 +3315,35 @@ class Game_BattlerBase
   alias research_mod_steal_success steal_success
 
   def steal_success
-    return Float::INFINITY if actor? && ResearchMod.steal_always_success?
-
     research_mod_steal_success
   end
 end
 
 class Game_Battler
+  alias research_mod_item_effect_steal item_effect_steal
   alias research_mod_item_hit item_hit
   alias research_mod_item_block_rate item_block_rate
   alias research_mod_sure_hit_item_apply_hit item_apply_hit
   alias research_mod_sure_kill_execute_damage execute_damage
+
+  def item_effect_steal(user, item, effect)
+    unless user.actor? && ResearchMod.steal_always_success?
+      return research_mod_item_effect_steal(user, item, effect)
+    end
+
+    @result.stealed = true
+    @result.success = true
+    list = steal_list[effect.data_id]
+    @result.stealed_item_empty = list.empty? ? true : false
+    return if $game_switches[NWConst::Sw::STEAL_FAIL]
+
+    steal = list.sort { |a, b| b[:denominator] <=> a[:denominator] }.first
+    return unless steal
+
+    $game_library.count_up_actor_steal(user.id)
+    item_steal(user, effect.data_id, steal)
+    list.clear
+  end
 
   def item_hit(user, item)
     if user.actor? && ResearchMod.steal_always_success? && ResearchMod.steal_item?(item)
@@ -2162,6 +3381,47 @@ class Game_Battler
 end
 
 class Game_Enemy
+  alias research_mod_enemy_stat_multiplier_mhp mhp
+  alias research_mod_enemy_stat_multiplier_mmp mmp
+  alias research_mod_enemy_stat_multiplier_atk atk
+  alias research_mod_enemy_stat_multiplier_def def
+  alias research_mod_enemy_stat_multiplier_mat mat
+  alias research_mod_enemy_stat_multiplier_mdf mdf
+  alias research_mod_enemy_stat_multiplier_agi agi
+  alias research_mod_enemy_stat_multiplier_luk luk
+
+  def mhp
+    ResearchMod.apply_enemy_stat_multiplier(research_mod_enemy_stat_multiplier_mhp)
+  end
+
+  def mmp
+    ResearchMod.apply_enemy_stat_multiplier(research_mod_enemy_stat_multiplier_mmp)
+  end
+
+  def atk
+    ResearchMod.apply_enemy_stat_multiplier(research_mod_enemy_stat_multiplier_atk)
+  end
+
+  def def
+    ResearchMod.apply_enemy_stat_multiplier(research_mod_enemy_stat_multiplier_def)
+  end
+
+  def mat
+    ResearchMod.apply_enemy_stat_multiplier(research_mod_enemy_stat_multiplier_mat)
+  end
+
+  def mdf
+    ResearchMod.apply_enemy_stat_multiplier(research_mod_enemy_stat_multiplier_mdf)
+  end
+
+  def agi
+    ResearchMod.apply_enemy_stat_multiplier(research_mod_enemy_stat_multiplier_agi)
+  end
+
+  def luk
+    ResearchMod.apply_enemy_stat_multiplier(research_mod_enemy_stat_multiplier_luk)
+  end
+
   alias research_mod_make_drop_items make_drop_items
 
   def make_drop_items
@@ -2170,6 +3430,16 @@ class Game_Enemy
     result = enemy.drop_items.select { |drop| drop.kind > 0 }
     result.each { |drop| $game_library.count_up_drop_item(id, drop) }
     result.map(&:object)
+  end
+end
+
+class Game_Party
+  alias research_mod_add_item_data_nil_guard add_item_data
+
+  def add_item_data(item, number)
+    return unless item
+
+    research_mod_add_item_data_nil_guard(item, number)
   end
 end
 
@@ -2189,6 +3459,7 @@ class Game_Interpreter
   alias research_mod_command_111 command_111
   alias research_mod_actor_label_jump actor_label_jump
   alias research_mod_command_122 command_122
+  alias research_mod_command_117 command_117
 
   def actor_label_jump
     return research_mod_actor_label_jump unless ResearchMod.all_dialogue_force_party?
@@ -2219,6 +3490,15 @@ class Game_Interpreter
     end
 
     research_mod_command_111
+  end
+
+  def command_117
+    if ResearchMod.temptation_disabled? &&
+       @params[0].to_i == ResearchMod::TEMPTATION_COMMON_EVENT_ID
+      return true
+    end
+
+    research_mod_command_117
   end
 
   def all_dialogue_actor_party_condition?
@@ -2284,10 +3564,16 @@ class Game_Interpreter
                         else
                           []
                         end
+    ring_entries = if ResearchMod.candidate_dialogue_view? &&
+                      ResearchMod.candidate_dialogue_menu?(var_id, names)
+                     ResearchMod.ring_dialogue_entries(@list, @index)
+                   else
+                     []
+                   end
     persona_enabled = ResearchMod.persona_dialogue_compatibility? &&
                       ResearchMod.persona_dialogue_menu?(var_id, names) &&
                       !persona_ids.empty?
-    dialogue_enabled = !candidate_entries.empty?
+    dialogue_enabled = !candidate_entries.empty? || !ring_entries.empty?
     unless persona_enabled || dialogue_enabled
       return research_mod_unlimited_choices(var_id, names)
     end
@@ -2313,7 +3599,7 @@ class Game_Interpreter
       if action == :persona
         research_mod_choose_persona(persona_ids)
       else
-        research_mod_choose_candidate_dialogue(candidate_entries)
+        research_mod_choose_candidate_dialogue(candidate_entries, ring_entries)
       end
       $game_variables[var_id] = names.index("やめる") || names.size
     elsif selected_index
@@ -2338,23 +3624,75 @@ class Game_Interpreter
     $game_party.persona_change(entries[selected_index].id)
   end
 
-  def research_mod_choose_candidate_dialogue(entries)
-    selected_index = nil
-    choices = entries.map do |entry|
-      if entry[:actor_id]
-        format('%4d  %s', entry[:actor_id], entry[:name])
-      else
-        entry[:name]
+  def research_mod_choose_candidate_dialogue(entries, ring_entries = [])
+    default_entry = entries.find { |entry| !entry[:actor_id] }
+    actor_entries = entries.select { |entry| entry[:actor_id] }
+    choices = ['未送戒指（默认对话）', '已送戒指（戒指专属对话）']
+    actions = [[:default, default_entry], [:ring, ring_entries]]
+    actor_entries.each do |entry|
+      choices << format('%4d  %s', entry[:actor_id], entry[:name])
+      actions << [:actor, entry]
+    end
+    choices << '返回'
+    loop do
+      selected_index = nil
+      choices.each { |name| $game_message.choices.push(name) }
+      $game_message.choice_cancel_type = choices.size
+      $game_message.choice_proc = proc { |index| selected_index = index }
+      Fiber.yield while $game_message.choice?
+      break unless selected_index && selected_index < actions.size
+
+      action, data = actions[selected_index]
+      case action
+      when :default
+        if data
+          research_mod_play_dialogue_blocks(data[:blocks])
+        else
+          research_mod_play_dialogue_notice('当前事件没有检测到默认对话。')
+        end
+      when :ring
+        research_mod_choose_ring_dialogue(data)
+      when :actor
+        research_mod_play_dialogue_blocks(data[:blocks])
       end
     end
-    choices << "やめる"
-    choices.each { |name| $game_message.choices.push(name) }
-    $game_message.choice_cancel_type = choices.size
-    $game_message.choice_proc = proc { |index| selected_index = index }
-    Fiber.yield while $game_message.choice?
-    return unless selected_index && selected_index < entries.size
+  end
 
-    entries[selected_index][:blocks].each do |block|
+  def research_mod_choose_ring_dialogue(entries)
+    if entries.empty?
+      research_mod_play_dialogue_notice('当前事件没有检测到戒指专属对话。')
+      return true
+    end
+
+    entry = entries.first
+    if entries.size > 1
+      selected_index = nil
+      choices = entries.map { |item| item[:name] }
+      choices << '返回'
+      choices.each { |name| $game_message.choices.push(name) }
+      $game_message.choice_cancel_type = choices.size
+      $game_message.choice_proc = proc { |index| selected_index = index }
+      Fiber.yield while $game_message.choice?
+      return false unless selected_index && selected_index < entries.size
+
+      entry = entries[selected_index]
+    end
+    research_mod_play_dialogue_blocks(entry[:blocks])
+    true
+  end
+
+  def research_mod_play_dialogue_notice(text)
+    wait_for_message
+    $game_message.face_name = ''
+    $game_message.face_index = 0
+    $game_message.background = 0
+    $game_message.position = 2
+    $game_message.add(text)
+    wait_for_message
+  end
+
+  def research_mod_play_dialogue_blocks(blocks)
+    blocks.each do |block|
       wait_for_message
       $game_message.face_name = block[:face_name]
       $game_message.face_index = block[:face_index]
@@ -2375,12 +3713,57 @@ class Game_Event
   end
 end
 
+class Game_Follower
+  def actor
+    return nil unless $game_party
+
+    actor_id = $game_party.actors[@member_index]
+    actor = actor_id ? $game_actors[actor_id] : nil
+    actor && actor.exist? ? actor : nil
+  end
+end
+
+class Game_Followers
+  alias research_mod_map_follower_initialize initialize
+
+  def initialize(leader)
+    research_mod_map_follower_initialize(leader)
+    research_mod_resize(ResearchMod.map_follower_count, leader)
+  end
+
+  def research_mod_resize(count, leader = nil)
+    count = [[count.to_i, ResearchMod::MAP_FOLLOWER_COUNT_MAX].min, 0].max
+    return if @data && @data.size == count
+
+    leader ||= $game_player
+    return unless leader
+
+    @data = []
+    preceding_character = leader
+    1.upto(count) do |member_index|
+      follower = Game_Follower.new(member_index, preceding_character)
+      follower.moveto(leader.x, leader.y)
+      follower.set_direction(leader.direction)
+      @data.push(follower)
+      preceding_character = follower
+    end
+    refresh
+  end
+end
+
 class Game_Player
   alias research_mod_through_update update
+  alias research_mod_no_random_encounter encounter
 
   def update
     research_mod_through_update
     ResearchMod.apply_through_mode if ResearchMod.through_mode?
+  end
+
+  def encounter
+    return false if ResearchMod.no_random_encounter?
+
+    research_mod_no_random_encounter
   end
 end
 
@@ -2409,10 +3792,30 @@ class Game_Troop
   end
 end
 
+class Game_Battler < Game_BattlerBase
+  alias research_mod_temptation_immunity_add_state add_state
+  alias research_mod_temptation_immunity_add_new_state add_new_state
+
+  def add_state(state_id, user = nil)
+    return if state_id == ResearchMod::TEMPTATION_STATE_ID &&
+              ResearchMod.temptation_immunity?
+
+    research_mod_temptation_immunity_add_state(state_id, user)
+  end
+
+  def add_new_state(state_id)
+    return if state_id == ResearchMod::TEMPTATION_STATE_ID &&
+              ResearchMod.temptation_immunity?
+
+    research_mod_temptation_immunity_add_new_state(state_id)
+  end
+end
+
 module BattleManager
   class << self
     alias research_mod_luca_order_giveup giveup
     alias research_mod_luca_order_process_defeat process_defeat
+    alias research_mod_lose_event_skip_change_novel_scene change_novel_scene
 
     def giveup
       order = ResearchMod.current_party_order if ResearchMod.prevent_event_luca_front?
@@ -2427,6 +3830,38 @@ module BattleManager
       ResearchMod.restore_party_order(order)
       result
     end
+
+    def change_novel_scene
+      return research_mod_lose_event_skip_change_novel_scene unless ResearchMod.lose_event_skip?
+      return research_mod_lose_event_skip_change_novel_scene unless $game_system
+      return research_mod_lose_event_skip_change_novel_scene unless $game_system.conf
+
+      config = $game_system.conf
+      had_setting = config.key?(:ls_skip)
+      previous_setting = config[:ls_skip]
+      config[:ls_skip] = 1
+      ResearchMod.force_lose_event_view = true
+      begin
+        research_mod_lose_event_skip_change_novel_scene
+      ensure
+        ResearchMod.force_lose_event_view = false
+        if had_setting
+          config[:ls_skip] = previous_setting
+        else
+          config.delete(:ls_skip)
+        end
+      end
+    end
+  end
+end
+
+class Game_Library
+  alias research_mod_lose_event_skip_viewed lose_event_view?
+
+  def lose_event_view?(lose_event_id)
+    return true if ResearchMod.force_lose_event_view?
+
+    research_mod_lose_event_skip_viewed(lose_event_id)
   end
 end
 
@@ -2496,11 +3931,11 @@ class Window_ResearchModBattleEnemyStatus < Window_ResearchModBattleStatusBase
 
   def window_height
     item_count = [@enemies.size + 1, 2].max
-    [fitting_height(item_count * 6), Graphics.height - 16].min
+    [fitting_height(item_count * 8), Graphics.height - 16].min
   end
 
   def item_height
-    line_height * 6
+    line_height * 8
   end
 
   def battle_enemies
@@ -2519,6 +3954,7 @@ class Window_ResearchModBattleEnemyStatus < Window_ResearchModBattleStatusBase
   def set_enemies(enemies)
     signature = enemies.map do |enemy|
       [enemy.object_id, enemy.hp, enemy.mhp, enemy.mp, enemy.mmp,
+       enemy.atk, enemy.def, enemy.mat, enemy.mdf, enemy.luk, enemy.agi,
        ResearchMod.enemy_battler_file_name(enemy),
        ResearchMod.enemy_cutin_file_names(enemy),
        enemy.states.map(&:id), buff_levels(enemy)]
@@ -2551,17 +3987,25 @@ class Window_ResearchModBattleEnemyStatus < Window_ResearchModBattleStatusBase
               format('HP %s / %s　　MP %s / %s',
                      formatted_number(enemy.hp), formatted_number(enemy.mhp),
                      formatted_number(enemy.mp), formatted_number(enemy.mmp)), 0)
+    draw_text(rect.x, rect.y + line_height * 2, rect.width, line_height,
+              format('攻击 %s　防御 %s　魔力 %s',
+                     formatted_number(enemy.atk), formatted_number(enemy.def),
+                     formatted_number(enemy.mat)), 0)
+    draw_text(rect.x, rect.y + line_height * 3, rect.width, line_height,
+              format('精神 %s　灵巧 %s　速度 %s',
+                     formatted_number(enemy.mdf), formatted_number(enemy.luk),
+                     formatted_number(enemy.agi)), 0)
     battler_name = ResearchMod.enemy_battler_file_name(enemy)
     battler_name = '无' if battler_name.empty?
-    draw_text(rect.x, rect.y + line_height * 2, rect.width, line_height,
-              format('战斗图：%s', battler_name), 0)
-    draw_text(rect.x, rect.y + line_height * 3, rect.width, line_height,
-              format('状态：%s', state_text(enemy)), 0)
     draw_text(rect.x, rect.y + line_height * 4, rect.width, line_height,
+              format('战斗图：%s', battler_name), 0)
+    draw_text(rect.x, rect.y + line_height * 5, rect.width, line_height,
+              format('状态：%s', state_text(enemy)), 0)
+    draw_text(rect.x, rect.y + line_height * 6, rect.width, line_height,
               format('强化/弱化：%s', buff_text(enemy)), 0)
     cutin_names = ResearchMod.enemy_cutin_file_names(enemy)
     cutin_text = cutin_names.empty? ? '无' : cutin_names.join(', ')
-    draw_text(rect.x, rect.y + line_height * 5, rect.width, line_height,
+    draw_text(rect.x, rect.y + line_height * 7, rect.width, line_height,
               format('技能Cut-in：%s', cutin_text), 0)
   end
 end
@@ -2607,9 +4051,8 @@ class Window_ResearchModBattlePartyStatus < Window_ResearchModBattleStatusBase
     signature = actors.map do |actor|
       [actor.object_id, actor.hp, actor.mhp, actor.mp, actor.mmp,
        (actor.respond_to?(:base_level) ? actor.base_level : actor.level),
-       actor.class_id, actor.tribe_id,
-       actor.states.map(&:id), buff_levels(actor),
-       actor.atk, actor.def, actor.mat, actor.agi]
+       actor.class_id, actor.tribe_id, actor.states.map(&:id),
+       buff_levels(actor), actor.atk, actor.def, actor.mat, actor.agi]
     end
     return if @actor_signature == signature
 
@@ -2664,6 +4107,111 @@ class Window_ResearchModBattlePartyStatus < Window_ResearchModBattleStatusBase
                      formatted_number(actor.mat), formatted_number(actor.agi)), 0)
   end
 end
+class Window_ResearchModBattleDialogueMain < Window_Command
+  def initialize
+    super(8, 8)
+    self.z = 520
+    hide
+    deactivate
+    unselect
+  end
+
+  def window_width
+    320
+  end
+
+  def make_command_list
+    add_command('搭话模拟', :custom_talk)
+    add_command('特殊战斗台词', :special)
+    add_command('我方技能台词', :party_skill)
+    add_command('敌方技能台词', :enemy_skill)
+    add_command('效果反应台词', :reaction)
+    add_command('双方组合预览', :combo)
+    add_command('返回', :cancel)
+  end
+end
+
+class Window_ResearchModBattleDialogueBattlerList < Window_Command
+  def initialize
+    @entries = []
+    @cancel_label = '返回'
+    super(0, 0)
+    self.z = 530
+    hide
+    deactivate
+    unselect
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height
+  end
+
+  def setup(entries, cancel_label = '返回')
+    @entries = entries
+    @cancel_label = cancel_label
+    refresh
+    select(0)
+  end
+
+  def make_command_list
+    @entries.each do |entry|
+      add_command(entry[:label], :select, entry.fetch(:enabled, true), entry)
+    end
+    add_command(@cancel_label, :cancel)
+  end
+end
+
+class Window_ResearchModBattleDialogueEnemyMode < Window_Command
+  def initialize
+    super(8, 8)
+    self.z = 540
+    hide
+    deactivate
+    unselect
+  end
+
+  def window_width
+    320
+  end
+
+  def make_command_list
+    add_command('可用技能台词', :available)
+    add_command('全部技能台词', :all_skills)
+    add_command('击败与异常台词', :down)
+    add_command('返回', :cancel)
+  end
+end
+
+class Window_ResearchModBattleDialogueSpecialMode < Window_Command
+  def initialize
+    super(8, 8)
+    self.z = 540
+    hide
+    deactivate
+    unselect
+  end
+
+  def window_width
+    320
+  end
+
+  def make_command_list
+    add_command('对话', :dialogue)
+    add_command('选项回应', :choice_response)
+    add_command('ヒーロー技', :hero)
+    add_command('踊る', :dance)
+    add_command('歌う', :sing)
+    add_command('变身类', :transformation)
+    add_command('爱玩', :playful)
+    add_command('誘惑反应', :temptation)
+    add_command('返回', :cancel)
+  end
+end
+
 class Window_ResearchModBattleEnemyDialogueEnemyList < Window_Command
   def initialize
     @enemy_entries = []
@@ -2702,10 +4250,17 @@ class Window_ResearchModBattleEnemyDialogueEnemyList < Window_Command
 end
 
 class Window_ResearchModBattleEnemyDialogueList < Window_Command
+  attr_reader :entries
+
+  MTOOL_DIALOGUE_ITEM_LINES = 3
+  MTOOL_DIALOGUE_PAGE_SIZE = 23
+
   def initialize(help_window)
     @enemy = nil
     @entries = []
     @dialogue_help_window = help_window
+    @page_index = 0
+    @page_max = 1
     super(0, 0)
     self.help_window = help_window
     hide
@@ -2721,26 +4276,169 @@ class Window_ResearchModBattleEnemyDialogueList < Window_Command
     Graphics.height - @dialogue_help_window.height
   end
 
-  def setup(enemy, entries)
+  def item_height
+    ResearchMod.mtool_active? ? line_height * MTOOL_DIALOGUE_ITEM_LINES : super
+  end
+
+  def setup(enemy, entries, owner_label = nil, cancel_text = nil)
     @enemy = enemy
     @entries = entries
+    @entries.each_with_index do |entry, index|
+      if special_dialogue_entry?(entry)
+        entry[:display_candidate_index] = index + 1
+      else
+        entry.delete(:display_candidate_index)
+      end
+    end
+    @page_index = 0
+    page_size = dialogue_page_size
+    @page_max = [(@entries.size + page_size - 1) / page_size, 1].max
+    @owner_label = owner_label || enemy.name.to_s
+    @cancel_text = cancel_text || '返回人物列表'
     refresh
     select(0)
     update_help
   end
 
   def make_command_list
-    @entries.each do |entry|
-      if entry[:skill_id]
-        label = format('[%s] %4d  %s  候选%d  %s', entry[:category],
-                       entry[:skill_id], entry[:skill_name],
-                       entry[:word_index], entry[:preview])
+    page_size = dialogue_page_size
+    start_index = @page_index * page_size
+    page_entries = @entries[start_index, page_size] || []
+    page_entries.each do |entry|
+      candidate_index = dialogue_candidate_index(entry)
+      if ResearchMod.mtool_active?
+        if entry[:choice_label]
+          label = format('[%s] %s', entry[:category],
+                         dialogue_choice_label(entry, 48))
+        elsif entry[:skill_id]
+          skill_name = ResearchMod.battle_dialogue_display_text(
+            entry[:skill_name], 32
+          )
+          label = format('[%s] %04d　%s　候选%d', entry[:category],
+                         entry[:skill_id], skill_name, candidate_index)
+        else
+          label = format('[%s] 候选%d', entry[:category], candidate_index)
+        end
       else
-        label = format('[%s] %s', entry[:category], entry[:preview])
+        preview = ResearchMod.battle_dialogue_display_text(entry[:preview], 72)
+        if entry[:choice_label]
+          label = format('[%s] %s  %s', entry[:category],
+                         dialogue_choice_label(entry, 48), preview)
+        elsif entry[:skill_id]
+          label = format('[%s] %4d  %s  候选%d  %s', entry[:category],
+                         entry[:skill_id], entry[:skill_name],
+                         candidate_index, preview)
+        elsif special_dialogue_entry?(entry)
+          label = format('[%s] 候选%d  %s', entry[:category],
+                         candidate_index, preview)
+        else
+          label = format('[%s] %s', entry[:category], preview)
+        end
       end
       add_command(label, :select, true, entry)
     end
-    add_command('返回敌人列表', :cancel)
+    add_command(format('上一批（%d/%d）', @page_index + 1, @page_max),
+                :previous, @page_index > 0)
+    add_command(format('下一批（%d/%d）', @page_index + 1, @page_max),
+                :next, @page_index + 1 < @page_max)
+    add_command(@cancel_text, :cancel)
+  end
+
+  def previous_page
+    return false if @page_index <= 0
+
+    @page_index -= 1
+    refresh
+    select(0)
+    update_help
+    true
+  end
+
+  def next_page
+    return false if @page_index + 1 >= @page_max
+
+    @page_index += 1
+    refresh
+    select(0)
+    update_help
+    true
+  end
+
+  def select_entry(entry)
+    index = @entries.index(entry)
+    return unless index
+
+    @page_index = index / dialogue_page_size
+    refresh
+    select(index % dialogue_page_size)
+    update_help
+  end
+
+  def dialogue_page_size
+    ResearchMod.mtool_active? ? MTOOL_DIALOGUE_PAGE_SIZE :
+                                ResearchMod::BATTLE_DIALOGUE_PAGE_SIZE
+  end
+
+  def special_dialogue_entry?(entry)
+    ['对话台词', '对话回应', '选项回应', '爱玩', '誘惑反应'].include?(entry[:category])
+  end
+
+  def dialogue_candidate_index(entry)
+    entry[:display_candidate_index] || entry[:word_index] || 1
+  end
+
+  def dialogue_choice_label(entry, maximum = nil)
+    ResearchMod.battle_dialogue_display_text(entry[:choice_label], maximum)
+  end
+
+  def mtool_preview_lines(entry)
+    text = ResearchMod.battle_dialogue_display_text(entry[:preview], 84)
+    return ['预览：（无文字）'] if text.empty?
+
+    words = text.scan(/.{1,42}/)
+    words = ['（无文字）'] if words.empty?
+    lines = ['预览：' + words[0]]
+    lines << '　　　' + words[1] if words[1]
+    lines
+  rescue
+    ['预览：（无法显示）']
+  end
+
+  def draw_item(index)
+    return super unless ResearchMod.mtool_active?
+
+    rect = item_rect(index)
+    contents.font.size = 18
+    command = @list[index]
+    change_color(normal_color, command && command[:enabled])
+    unless command && command[:symbol] == :select
+      name = command ? command[:name].to_s : ''
+      draw_text(rect.x, rect.y, rect.width, item_height, name, 1)
+      return
+    end
+
+    entry = command_ext(index)
+    return unless entry
+
+    if entry[:choice_label]
+      first_line = format('[%s] %s', entry[:category],
+                          dialogue_choice_label(entry, 48))
+    elsif entry[:skill_id]
+      skill_name = ResearchMod.battle_dialogue_display_text(
+        entry[:skill_name], 32
+      )
+      first_line = format('[%s] %04d　%s　候选%d', entry[:category],
+                          entry[:skill_id], skill_name,
+                          dialogue_candidate_index(entry))
+    else
+      first_line = format('[%s] 候选%d', entry[:category],
+                          dialogue_candidate_index(entry))
+    end
+    draw_text(rect.x, rect.y, rect.width, line_height, first_line, 0)
+    mtool_preview_lines(entry).each_with_index do |line, line_index|
+      draw_text(rect.x, rect.y + line_height * (line_index + 1),
+                rect.width, line_height, line, 0)
+    end
   end
 
   def update_help
@@ -2748,17 +4446,55 @@ class Window_ResearchModBattleEnemyDialogueList < Window_Command
 
     if current_symbol == :select
       entry = current_ext
-      if entry[:skill_id]
-        header = format('敌人：%04d「%s」  类型：%s  技能：%04d「%s」  候选%d',
-                        @enemy.enemy_id, @enemy.name, entry[:category],
-                        entry[:skill_id], entry[:skill_name], entry[:word_index])
+      battler_id = ResearchMod.battler_dialogue_id(@enemy)
+      if ResearchMod.mtool_active? && entry[:choice_label]
+        help_window.set_text(
+          [format('%s编号：%04d　选项：%s', @owner_label, battler_id,
+                  dialogue_choice_label(entry, 54)),
+           'MTool兼容显示：确认后播放提问和对应回应。'].join(10.chr)
+        )
+        return
+      elsif ResearchMod.mtool_active? && entry[:skill_id]
+        skill_name = ResearchMod.battle_dialogue_display_text(
+          entry[:skill_name], 40
+        )
+        help_window.set_text(
+          [format('%s编号：%04d　技能：%04d「%s」　候选：%d',
+                  @owner_label, battler_id, entry[:skill_id], skill_name,
+                  dialogue_candidate_index(entry)),
+           'MTool兼容显示：确认后播放完整台词。'].join(10.chr)
+        )
+        return
+      elsif ResearchMod.mtool_active?
+        help_window.set_text(
+          [format('%s编号：%04d　候选：%d',
+                  @owner_label, battler_id, dialogue_candidate_index(entry)),
+           'MTool兼容显示：确认后播放完整台词。'].join(10.chr)
+        )
+        return
+      elsif entry[:choice_label]
+        header = format('%s：%04d「%s」  类型：%s  选项：%s',
+                        @owner_label, battler_id, @enemy.name, entry[:category],
+                        dialogue_choice_label(entry, 54))
+      elsif entry[:skill_id]
+        header = format('%s：%04d「%s」  类型：%s  技能：%04d「%s」  候选%d',
+                        @owner_label, battler_id, @enemy.name, entry[:category],
+                        entry[:skill_id], entry[:skill_name],
+                        dialogue_candidate_index(entry))
       else
-        header = format('敌人：%04d「%s」  类型：%s',
-                        @enemy.enemy_id, @enemy.name, entry[:category])
+        header = format('%s：%04d「%s」  类型：%s  候选%d',
+                        @owner_label, battler_id, @enemy.name, entry[:category],
+                        dialogue_candidate_index(entry))
       end
-      help_window.set_text(([header] + entry[:lines]).join(10.chr))
+      header = ResearchMod.battle_dialogue_display_text(header, 100)
+      lines = ResearchMod.battle_dialogue_help_lines(entry[:lines])
+      help_window.set_text(([header] + lines).join(10.chr))
+    elsif current_symbol == :previous
+      help_window.set_text('加载上一批战斗台词。')
+    elsif current_symbol == :next
+      help_window.set_text('加载下一批战斗台词。')
     else
-      help_window.set_text('返回敌人列表。选择对话只播放台词，不会发动对应技能。')
+      help_window.set_text('返回上一级。选择对话只播放台词，不会发动技能或应用效果。')
     end
   end
 end
@@ -2785,10 +4521,535 @@ class Window_ResearchModBattleRecord < Window_Selectable
   def draw_item(index)
     return unless @records && @records[index]
 
-    contents.font.size = 18
+    contents.font.size = 20
     draw_text(item_rect_for_text(index), @records[index])
   end
 end
+
+class Window_ResearchModBattleCutinType < Window_Command
+  def initialize
+    super(8, 8)
+    self.z = 520
+    deactivate
+    unselect
+    hide
+  end
+
+  def window_width
+    280
+  end
+
+  def make_command_list
+    add_command('查看敌方Cut-in', :enemy)
+    add_command('查看我方Cut-in', :party)
+    add_command('返回', :cancel)
+  end
+end
+
+class Window_ResearchModBattleCutinBattlerList < Window_Command
+  def initialize
+    @battlers = []
+    @side = :party
+    super(8, 8)
+    self.z = 530
+    deactivate
+    unselect
+    hide
+  end
+
+  def window_width
+    Graphics.width - 16
+  end
+
+  def window_height
+    [fitting_height([@battlers.size + 1, 2].max), Graphics.height - 16].min
+  end
+
+  def setup(battlers, side)
+    @battlers = battlers.compact
+    @side = side
+    self.height = window_height
+    refresh
+    select(0)
+  end
+
+  def make_command_list
+    @battlers.each do |battler|
+      id = @side == :party ? battler.actor_id : battler.enemy_id
+      add_command(format('%4d  %s', id, battler.name), :select, true, battler)
+    end
+    add_command('返回', :cancel)
+  end
+end
+
+class Window_ResearchModBattleCutinEnemyMode < Window_Command
+  def initialize
+    super(8, 8)
+    self.z = 540
+    deactivate
+    unselect
+    hide
+  end
+
+  def window_width
+    320
+  end
+
+  def make_command_list
+    add_command('可用技能Cut-in', :available)
+    add_command('全部配置Cut-in', :all)
+    add_command('返回', :cancel)
+  end
+end
+
+class Window_ResearchModBattleCutinList < Window_Command
+  attr_reader :entries
+
+  def initialize(help_window)
+    @entries = []
+    @owner_label = ''
+    @page_index = 0
+    @page_max = 1
+    @cutin_help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    self.z = 560
+    deactivate
+    unselect
+    hide
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @cutin_help_window.height
+  end
+
+  def setup(owner_label, entries, page_index = 0)
+    @owner_label = owner_label.to_s
+    @entries = entries.compact.map(&:to_s).reject(&:empty?).uniq
+    @page_max = [(@entries.size + ResearchMod::ACTOR_CUTIN_PAGE_SIZE - 1) /
+                 ResearchMod::ACTOR_CUTIN_PAGE_SIZE, 1].max
+    @page_index = [[page_index, @page_max - 1].min, 0].max
+    refresh
+    select(0)
+    update_help
+  end
+
+  def make_command_list
+    start_index = @page_index * ResearchMod::ACTOR_CUTIN_PAGE_SIZE
+    page_entries = @entries[start_index, ResearchMod::ACTOR_CUTIN_PAGE_SIZE] || []
+    page_entries.each_with_index do |file_name, index|
+      global_index = start_index + index
+      add_command(format('%4d  %s', global_index + 1, file_name),
+                  :select, true, [global_index, file_name])
+    end
+    add_command(format('上一批（%d/%d）', @page_index + 1, @page_max),
+                :previous, @page_index > 0)
+    add_command(format('下一批（%d/%d）', @page_index + 1, @page_max),
+                :next, @page_index + 1 < @page_max)
+    add_command('返回', :cancel)
+  end
+
+  def previous_page
+    return false if @page_index <= 0
+
+    setup(@owner_label, @entries, @page_index - 1)
+    true
+  end
+
+  def next_page
+    return false if @page_index + 1 >= @page_max
+
+    setup(@owner_label, @entries, @page_index + 1)
+    true
+  end
+
+  def select_global_index(global_index)
+    @page_index = global_index / ResearchMod::ACTOR_CUTIN_PAGE_SIZE
+    refresh
+    select(global_index % ResearchMod::ACTOR_CUTIN_PAGE_SIZE)
+  end
+
+  def update_help
+    if current_symbol == :select
+      global_index, file_name = current_ext
+      @cutin_help_window.set_text(
+        format('%s　Cut-in %d/%d\n文件名：%s\n确认：查看图片　取消：返回',
+               @owner_label, global_index + 1, @entries.size,
+               file_name).gsub(92.chr + 'n', 10.chr)
+      )
+    elsif current_symbol == :previous
+      @cutin_help_window.set_text('加载上一批 Cut-in 文件名。')
+    elsif current_symbol == :next
+      @cutin_help_window.set_text('加载下一批 Cut-in 文件名。')
+    else
+      @cutin_help_window.set_text('返回战斗人物列表。')
+    end
+  end
+end
+
+class Window_ResearchModBattleEditBase < Window_Command
+  def initialize(help_window)
+    @research_mod_help_window = help_window
+    super(0, 0)
+    self.y = [(@research_mod_help_window.y - height) / 2, 0].max
+    self.z = 560
+    self.help_window = @research_mod_help_window
+    hide
+    deactivate
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def visible_line_number
+    [[item_max, 1].max, 12].min
+  end
+
+  def open_window
+    select(0)
+    show
+    activate
+    update_help
+  end
+end
+
+class Window_ResearchModBattleEditMain < Window_ResearchModBattleEditBase
+  def make_command_list
+    add_command('异常状态', :state)
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    text = current_symbol == :state ?
+      '修改当前战斗中敌我成员的异常状态，不消耗回合。' :
+      '返回战斗队伍指令菜单。'
+    help_window.set_text(text)
+  end
+end
+
+class Window_ResearchModBattleEditTalkActor < Window_Command
+  def initialize(help_window)
+    @battlers = []
+    @talk_help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    self.z = 560
+    hide
+    deactivate
+    unselect
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @talk_help_window.height
+  end
+
+  def setup(battlers)
+    @battlers = battlers.compact
+    refresh
+    select(0)
+    show
+    activate
+    update_help
+  end
+
+  def make_command_list
+    @battlers.each do |battler|
+      entries = ResearchMod.talk_initiator_dialogue_entries(battler)
+      enemy_side = battler.respond_to?(:enemy_id)
+      side_name = enemy_side ? '敌方' : '我方'
+      battler_id = ResearchMod.battler_dialogue_id(battler)
+      add_command(format('[%s] %4d  %s　（搭话%d条）', side_name,
+                         battler_id, battler.name,
+                         entries.size), :select, true,
+                  { :battler => battler, :entries => entries,
+                    :side_name => side_name })
+    end
+    add_command('返回战斗对白模拟', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    if current_symbol == :select
+      data = current_ext
+      previews = data[:entries].first(2).map do |entry|
+        ResearchMod.battle_dialogue_display_text(entry[:preview], 90)
+      end
+      battler = data[:battler]
+      header = format('[%s] %4d  %s　（搭话%d条）', data[:side_name],
+                      ResearchMod.battler_dialogue_id(battler), battler.name,
+                      data[:entries].size)
+      help_window.set_text(([header] + previews).join(10.chr))
+    else
+      help_window.set_text('返回战斗对白模拟。')
+    end
+  end
+end
+
+class Window_ResearchModBattleEditTalkEnemy < Window_Command
+  def initialize(help_window)
+    @enemies = []
+    @initiator = nil
+    @talk_help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    self.z = 560
+    hide
+    deactivate
+    unselect
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @talk_help_window.height
+  end
+
+  def setup(enemies, initiator = nil)
+    @enemies = enemies.compact
+    @initiator = initiator
+    refresh
+    select(0)
+    show
+    activate
+    update_help
+  end
+
+  def make_command_list
+    @enemies.each do |enemy|
+      entries = ResearchMod.enemy_dialogue_entries(enemy, :special).select do |entry|
+        entry[:skill_id]
+      end
+      entries.each_with_index do |entry, entry_index|
+        entry[:custom_talk_index] = entry_index + 1
+      end
+      add_command(format('%4d  %s　（搭话%d条）', enemy.enemy_id, enemy.name,
+                         entries.size), :select, !entries.empty?,
+                  { :enemy => enemy, :entries => entries })
+    end
+    add_command('返回发起角色列表', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    if current_symbol == :select
+      data = current_ext
+      previews = data[:entries].first(2).map do |entry|
+        ResearchMod.battle_dialogue_display_text(entry[:preview], 90)
+      end
+      header = format('%4d  %s　（搭话%d条）', data[:enemy].enemy_id,
+                      data[:enemy].name, data[:entries].size)
+      help_window.set_text(([header] + previews).join(10.chr))
+    else
+      help_window.set_text('返回发起角色列表。')
+    end
+  end
+end
+
+class Window_ResearchModBattleEditTalkList < Window_Command
+  attr_reader :enemy
+  attr_reader :actor
+
+  def initialize(help_window)
+    @entries = []
+    @enemy = nil
+    @actor = nil
+    @talk_help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    self.z = 570
+    hide
+    deactivate
+    unselect
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @talk_help_window.height
+  end
+
+  def setup(enemy, entries, actor = nil)
+    @enemy = enemy
+    @actor = actor
+    @entries = entries
+    refresh
+    select(0)
+    show
+    activate
+    update_help
+  end
+
+  def make_command_list
+    @entries.each_with_index do |entry, index|
+      preview = ResearchMod.battle_dialogue_display_text(entry[:preview], 70)
+      add_command(format('搭话%d　%s', index + 1, preview),
+                  :select, true, entry)
+    end
+    add_command('返回敌人列表', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    if current_symbol == :select
+      entry = current_ext
+      header = format('%s → %s　搭话%d', @actor ? @actor.name : '我方',
+                      @enemy.name, index + 1)
+      lines = ResearchMod.battle_dialogue_help_lines(entry[:lines])
+      help_window.set_text(([header] + lines.first(2)).join(10.chr))
+    else
+      help_window.set_text('返回敌人列表。')
+    end
+  end
+end
+class Window_ResearchModBattleEditState < Window_ResearchModBattleEditBase
+  def make_command_list
+    add_command('誘惑', :temptation)
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    text = current_symbol == :temptation ?
+      '强制赋予或解除誘惑状态（状态ID 26）。' :
+      '返回战斗修改菜单。'
+    help_window.set_text(text)
+  end
+end
+
+class Window_ResearchModBattleEditTemptationAction < Window_ResearchModBattleEditBase
+  def make_command_list
+    add_command('赋予誘惑', :add, !ResearchMod.temptation_immunity?)
+    add_command('解除誘惑', :remove)
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    text = case current_symbol
+           when :add
+             if ResearchMod.temptation_immunity?
+               '“敌我全员誘惑免疫”已开启，赋予操作不可用。'
+             else
+               '选择敌我成员并强制赋予誘惑，无视目标状态抗性。'
+             end
+           when :remove
+             '选择敌我成员并解除当前的誘惑状态。'
+           else
+             '返回异常状态列表。'
+           end
+    help_window.set_text(text)
+  end
+end
+
+class Window_ResearchModBattleEditTarget < Window_ResearchModBattleEditBase
+  attr_reader :action
+
+  def initialize(help_window)
+    @action = :add
+    super(help_window)
+  end
+
+  def setup(action)
+    @action = action
+    refresh
+    open_window
+  end
+
+  def make_command_list
+    party = ResearchMod.battle_party_members
+    enemies = ResearchMod.battle_enemy_members
+    all_members = (party + enemies).uniq
+    add_target_command('敌我全体', all_members)
+    add_target_command('我方全体', party)
+    add_target_command('敌方全体', enemies)
+    party.each { |battler| add_battler_command('我方', battler) }
+    enemies.each { |battler| add_battler_command('敌方', battler) }
+    add_command('返回', :cancel)
+  end
+
+  def add_target_command(label, targets)
+    add_command(label, :select, target_enabled?(targets), targets)
+  end
+
+  def add_battler_command(side, battler)
+    marker = battler.state?(ResearchMod::TEMPTATION_STATE_ID) ? '【誘惑】' : ''
+    add_target_command(format('%s：%s%s', side, battler.name, marker), [battler])
+  end
+
+  def target_enabled?(targets)
+    return false if targets.empty?
+    return false if @action == :add && ResearchMod.temptation_immunity?
+
+    return true if @action == :add
+
+    targets.any? { |battler| battler.state?(ResearchMod::TEMPTATION_STATE_ID) }
+  end
+
+  def target_label
+    data = current_data
+    data ? data[:name].to_s : ''
+  end
+
+  def update_help
+    return unless help_window
+
+    if current_symbol == :select
+      action_text = @action == :add ? '赋予誘惑' : '解除誘惑'
+      help_window.set_text(format('%s：%s。确认后进入最终确认。', action_text,
+                                  target_label))
+    else
+      help_window.set_text('返回誘惑操作菜单。')
+    end
+  end
+end
+
+class Window_ResearchModBattleEditConfirm < Window_ResearchModBattleEditBase
+  def initialize(help_window)
+    @action = :add
+    @target_label = ''
+    super(help_window)
+  end
+
+  def setup(action, target_label)
+    @action = action
+    @target_label = target_label
+    refresh
+    open_window
+  end
+
+  def make_command_list
+    add_command('确定执行', :execute)
+    add_command('取消', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    action_text = @action == :add ? '赋予誘惑' : '解除誘惑'
+    help_window.set_text(format('目标：%s　操作：%s。', @target_label, action_text))
+  end
+end
+
 class Window_PartyCommand < Window_Command
   alias research_mod_enemy_info_make_command_list make_command_list
 
@@ -2796,11 +5057,10 @@ class Window_PartyCommand < Window_Command
     research_mod_enemy_info_make_command_list
     add_command('敌方信息', :research_enemy_info) if ResearchMod.battle_enemy_status?
     add_command('我方信息', :research_party_info) if ResearchMod.battle_party_status?
-    add_command('可用技能台词', :research_enemy_dialogue_available) if ResearchMod.manual_enemy_dialogue?
-    add_command('全部技能台词', :research_enemy_dialogue_all) if ResearchMod.manual_enemy_dialogue?
-    add_command('特殊战斗对白', :research_enemy_dialogue_special) if ResearchMod.manual_enemy_dialogue?
-    add_command('击败台词', :research_enemy_dialogue_down) if ResearchMod.manual_enemy_dialogue?
+    add_command('双方Cut-in查看', :research_battle_cutin) if ResearchMod.battle_cutin_view?
+    add_command('战斗对白模拟', :research_battle_dialogue) if ResearchMod.manual_enemy_dialogue?
     add_command('战斗记录', :research_battle_record) if ResearchMod.battle_record_enabled?
+    add_command('战斗修改', :research_battle_edit) if ResearchMod.battle_editor_enabled?
   end
 end
 
@@ -2813,6 +5073,7 @@ class Scene_Battle < Scene_Base
 
   def battle_start
     ResearchMod.clear_battle_records
+    ResearchMod.clear_battle_temptation if ResearchMod.temptation_immunity?
     research_mod_battle_record_battle_start
   end
 
@@ -2822,24 +5083,21 @@ class Scene_Battle < Scene_Base
                                       method(:open_research_mod_enemy_status))
     @party_command_window.set_handler(:research_party_info,
                                       method(:open_research_mod_party_status))
+    @party_command_window.set_handler(:research_battle_cutin,
+                                      method(:open_research_mod_battle_cutin))
     @party_command_window.set_handler(:research_battle_record,
                                       method(:open_research_mod_battle_record))
-    @party_command_window.set_handler(
-      :research_enemy_dialogue_available,
-      method(:open_research_mod_enemy_dialogue_available)
-    )
-    @party_command_window.set_handler(
-      :research_enemy_dialogue_all,
-      method(:open_research_mod_enemy_dialogue_all)
-    )
-    @party_command_window.set_handler(
-      :research_enemy_dialogue_special,
-      method(:open_research_mod_enemy_dialogue_special)
-    )
-    @party_command_window.set_handler(
-      :research_enemy_dialogue_down,
-      method(:open_research_mod_enemy_dialogue_down)
-    )
+    @party_command_window.set_handler(:research_battle_dialogue,
+                                      method(:open_research_mod_battle_dialogue))
+    @party_command_window.set_handler(:research_battle_edit,
+                                      method(:open_research_mod_battle_edit))
+  end
+
+  alias research_mod_audio_overlay_start start
+
+  def start
+    research_mod_audio_overlay_start
+    create_research_mod_audio_overlay
   end
 
   def create_enemy_window
@@ -2862,6 +5120,106 @@ class Scene_Battle < Scene_Base
     @research_mod_battle_record_window.set_handler(
       :cancel, method(:close_research_mod_battle_record)
     )
+    @research_mod_battle_cutin_type_window = Window_ResearchModBattleCutinType.new
+    @research_mod_battle_cutin_type_window.set_handler(
+      :party, method(:open_research_mod_party_cutin_members)
+    )
+    @research_mod_battle_cutin_type_window.set_handler(
+      :enemy, method(:open_research_mod_enemy_cutin_members)
+    )
+    @research_mod_battle_cutin_type_window.set_handler(
+      :cancel, method(:close_research_mod_battle_cutin)
+    )
+    @research_mod_battle_cutin_battler_window =
+      Window_ResearchModBattleCutinBattlerList.new
+    @research_mod_battle_cutin_battler_window.set_handler(
+      :select, method(:select_research_mod_battle_cutin_battler)
+    )
+    @research_mod_battle_cutin_battler_window.set_handler(
+      :cancel, method(:close_research_mod_battle_cutin_battlers)
+    )
+    @research_mod_battle_cutin_enemy_mode_window =
+      Window_ResearchModBattleCutinEnemyMode.new
+    @research_mod_battle_cutin_enemy_mode_window.set_handler(
+      :available, method(:open_research_mod_available_enemy_cutins)
+    )
+    @research_mod_battle_cutin_enemy_mode_window.set_handler(
+      :all, method(:open_research_mod_all_enemy_cutins)
+    )
+    @research_mod_battle_cutin_enemy_mode_window.set_handler(
+      :cancel, method(:close_research_mod_enemy_cutin_mode)
+    )
+    @research_mod_battle_cutin_help_window = Window_Help.new(3)
+    @research_mod_battle_cutin_help_window.y =
+      Graphics.height - @research_mod_battle_cutin_help_window.height
+    @research_mod_battle_cutin_help_window.z = 570
+    @research_mod_battle_cutin_help_window.hide
+    @research_mod_battle_cutin_list_window =
+      Window_ResearchModBattleCutinList.new(@research_mod_battle_cutin_help_window)
+    @research_mod_battle_cutin_list_window.set_handler(
+      :select, method(:open_research_mod_battle_cutin_preview)
+    )
+    @research_mod_battle_cutin_list_window.set_handler(
+      :previous, method(:load_previous_research_mod_battle_cutin_page)
+    )
+    @research_mod_battle_cutin_list_window.set_handler(
+      :next, method(:load_next_research_mod_battle_cutin_page)
+    )
+    @research_mod_battle_cutin_list_window.set_handler(
+      :cancel, method(:close_research_mod_battle_cutin_list)
+    )
+    @research_mod_battle_dialogue_main_window =
+      Window_ResearchModBattleDialogueMain.new
+    @research_mod_battle_dialogue_main_window.set_handler(
+      :custom_talk, method(:open_research_mod_battle_edit_custom_talk)
+    )
+    @research_mod_battle_dialogue_main_window.set_handler(
+      :party_skill, method(:open_research_mod_party_skill_dialogue)
+    )
+    @research_mod_battle_dialogue_main_window.set_handler(
+      :enemy_skill, method(:open_research_mod_enemy_skill_dialogue)
+    )
+    @research_mod_battle_dialogue_main_window.set_handler(
+      :special, method(:open_research_mod_special_dialogue)
+    )
+    @research_mod_battle_dialogue_main_window.set_handler(
+      :reaction, method(:open_research_mod_reaction_dialogue)
+    )
+    @research_mod_battle_dialogue_main_window.set_handler(
+      :combo, method(:open_research_mod_combo_dialogue)
+    )
+    @research_mod_battle_dialogue_main_window.set_handler(
+      :cancel, method(:close_research_mod_battle_dialogue)
+    )
+    @research_mod_battle_dialogue_battler_window =
+      Window_ResearchModBattleDialogueBattlerList.new
+    @research_mod_battle_dialogue_battler_window.set_handler(
+      :select, method(:select_research_mod_battle_dialogue_battler)
+    )
+    @research_mod_battle_dialogue_battler_window.set_handler(
+      :cancel, method(:close_research_mod_battle_dialogue_battlers)
+    )
+    @research_mod_battle_dialogue_enemy_mode_window =
+      Window_ResearchModBattleDialogueEnemyMode.new
+    [:available, :all_skills, :down].each do |symbol|
+      @research_mod_battle_dialogue_enemy_mode_window.set_handler(
+        symbol, method(:select_research_mod_battle_dialogue_enemy_mode)
+      )
+    end
+    @research_mod_battle_dialogue_enemy_mode_window.set_handler(
+      :cancel, method(:close_research_mod_battle_dialogue_enemy_mode)
+    )
+    @research_mod_battle_dialogue_special_mode_window =
+      Window_ResearchModBattleDialogueSpecialMode.new
+    [:dialogue, :choice_response, :hero, :dance, :sing, :transformation,
+     :playful, :temptation].each do |symbol|
+      @research_mod_battle_dialogue_special_mode_window.set_handler(
+        symbol, method(:select_research_mod_special_dialogue_mode)
+      )
+    end
+    @research_mod_battle_dialogue_special_mode_window.set_handler(
+      :cancel, method(:close_research_mod_special_dialogue_mode)
+    )
     @research_mod_enemy_dialogue_enemy_window =
       Window_ResearchModBattleEnemyDialogueEnemyList.new
     @research_mod_enemy_dialogue_enemy_window.set_handler(
@@ -2879,10 +5237,90 @@ class Scene_Battle < Scene_Base
         @research_mod_enemy_dialogue_help_window
       )
     @research_mod_enemy_dialogue_window.set_handler(
-      :select, method(:execute_research_mod_enemy_dialogue)
+      :select, method(:execute_research_mod_battle_dialogue)
     )
     @research_mod_enemy_dialogue_window.set_handler(
-      :cancel, method(:close_research_mod_enemy_dialogue_list)
+      :previous, method(:load_previous_research_mod_battle_dialogue_page)
+    )
+    @research_mod_enemy_dialogue_window.set_handler(
+      :next, method(:load_next_research_mod_battle_dialogue_page)
+    )
+    @research_mod_enemy_dialogue_window.set_handler(
+      :cancel, method(:close_research_mod_battle_dialogue_list)
+    )
+    @research_mod_battle_edit_help_window = Window_Help.new(3)
+    @research_mod_battle_edit_help_window.y =
+      Graphics.height - @research_mod_battle_edit_help_window.height
+    @research_mod_battle_edit_help_window.z = 570
+    @research_mod_battle_edit_help_window.hide
+    @research_mod_battle_edit_main_window =
+      Window_ResearchModBattleEditMain.new(@research_mod_battle_edit_help_window)
+    @research_mod_battle_edit_main_window.set_handler(
+      :state, method(:open_research_mod_battle_edit_states)
+    )
+    @research_mod_battle_edit_main_window.set_handler(
+      :cancel, method(:close_research_mod_battle_edit)
+    )
+    @research_mod_battle_edit_state_window =
+      Window_ResearchModBattleEditState.new(@research_mod_battle_edit_help_window)
+    @research_mod_battle_edit_state_window.set_handler(
+      :temptation, method(:open_research_mod_battle_edit_temptation)
+    )
+    @research_mod_battle_edit_state_window.set_handler(
+      :cancel, method(:close_research_mod_battle_edit_states)
+    )
+    @research_mod_battle_edit_action_window =
+      Window_ResearchModBattleEditTemptationAction.new(
+        @research_mod_battle_edit_help_window
+      )
+    @research_mod_battle_edit_action_window.set_handler(
+      :add, method(:open_research_mod_battle_edit_add_targets)
+    )
+    @research_mod_battle_edit_action_window.set_handler(
+      :remove, method(:open_research_mod_battle_edit_remove_targets)
+    )
+    @research_mod_battle_edit_action_window.set_handler(
+      :cancel, method(:close_research_mod_battle_edit_temptation)
+    )
+    @research_mod_battle_edit_target_window =
+      Window_ResearchModBattleEditTarget.new(@research_mod_battle_edit_help_window)
+    @research_mod_battle_edit_target_window.set_handler(
+      :select, method(:confirm_research_mod_battle_edit_target)
+    )
+    @research_mod_battle_edit_target_window.set_handler(
+      :cancel, method(:close_research_mod_battle_edit_targets)
+    )
+    @research_mod_battle_edit_confirm_window =
+      Window_ResearchModBattleEditConfirm.new(@research_mod_battle_edit_help_window)
+    @research_mod_battle_edit_confirm_window.set_handler(
+      :execute, method(:execute_research_mod_battle_edit)
+    )
+    @research_mod_battle_edit_confirm_window.set_handler(
+      :cancel, method(:cancel_research_mod_battle_edit_confirm)
+    )
+    @research_mod_battle_edit_talk_actor_window =
+      Window_ResearchModBattleEditTalkActor.new(@research_mod_battle_edit_help_window)
+    @research_mod_battle_edit_talk_actor_window.set_handler(
+      :select, method(:select_research_mod_battle_edit_talk_actor)
+    )
+    @research_mod_battle_edit_talk_actor_window.set_handler(
+      :cancel, method(:close_research_mod_battle_edit_custom_talk)
+    )
+    @research_mod_battle_edit_talk_enemy_window =
+      Window_ResearchModBattleEditTalkEnemy.new(@research_mod_battle_edit_help_window)
+    @research_mod_battle_edit_talk_enemy_window.set_handler(
+      :select, method(:select_research_mod_battle_edit_talk_enemy)
+    )
+    @research_mod_battle_edit_talk_enemy_window.set_handler(
+      :cancel, method(:close_research_mod_battle_edit_talk_enemy)
+    )
+    @research_mod_battle_edit_talk_list_window =
+      Window_ResearchModBattleEditTalkList.new(@research_mod_battle_edit_help_window)
+    @research_mod_battle_edit_talk_list_window.set_handler(
+      :select, method(:play_research_mod_battle_edit_talk)
+    )
+    @research_mod_battle_edit_talk_list_window.set_handler(
+      :cancel, method(:close_research_mod_battle_edit_talk_list)
     )
   end
 
@@ -2890,6 +5328,220 @@ class Scene_Battle < Scene_Base
     return [] unless $game_troop
 
     $game_troop.members.select { |enemy| enemy && enemy.exist? }
+  end
+
+  def research_mod_battle_actors
+    return [] unless $game_party
+
+    members = if $game_party.respond_to?(:battle_members)
+                $game_party.battle_members
+              else
+                $game_party.members
+              end
+    members.compact
+  end
+
+  def open_research_mod_battle_cutin
+    @party_command_window.deactivate
+    @research_mod_battle_cutin_type_window.select(0)
+    @research_mod_battle_cutin_type_window.show
+    @research_mod_battle_cutin_type_window.activate
+  end
+
+  def open_research_mod_party_cutin_members
+    battlers = research_mod_battle_actors
+    return research_mod_battle_cutin_empty(@research_mod_battle_cutin_type_window) if battlers.empty?
+
+    @research_mod_battle_cutin_side = :party
+    @research_mod_battle_cutin_type_window.hide
+    @research_mod_battle_cutin_type_window.deactivate
+    @research_mod_battle_cutin_battler_window.setup(battlers, :party)
+    @research_mod_battle_cutin_battler_window.show
+    @research_mod_battle_cutin_battler_window.activate
+  end
+
+  def open_research_mod_enemy_cutin_members
+    battlers = research_mod_visible_enemies
+    return research_mod_battle_cutin_empty(@research_mod_battle_cutin_type_window) if battlers.empty?
+
+    @research_mod_battle_cutin_side = :enemy
+    @research_mod_battle_cutin_type_window.hide
+    @research_mod_battle_cutin_type_window.deactivate
+    @research_mod_battle_cutin_battler_window.setup(battlers, :enemy)
+    @research_mod_battle_cutin_battler_window.show
+    @research_mod_battle_cutin_battler_window.activate
+  end
+
+  def select_research_mod_battle_cutin_battler
+    battler = @research_mod_battle_cutin_battler_window.current_ext
+    return research_mod_battle_cutin_empty(@research_mod_battle_cutin_battler_window) unless battler
+
+    @research_mod_battle_cutin_battler = battler
+    if @research_mod_battle_cutin_side == :party
+      names = ResearchMod.actor_cutin_file_names(battler)
+      open_research_mod_battle_cutin_list(battler.name, names, :party_members)
+    else
+      @research_mod_battle_cutin_battler_window.hide
+      @research_mod_battle_cutin_battler_window.deactivate
+      @research_mod_battle_cutin_enemy_mode_window.select(0)
+      @research_mod_battle_cutin_enemy_mode_window.show
+      @research_mod_battle_cutin_enemy_mode_window.activate
+    end
+  end
+
+  def open_research_mod_available_enemy_cutins
+    enemy = @research_mod_battle_cutin_battler
+    names = ResearchMod.enemy_cutin_file_names(enemy)
+    open_research_mod_battle_cutin_list(enemy.name, names, :enemy_mode)
+  end
+
+  def open_research_mod_all_enemy_cutins
+    enemy = @research_mod_battle_cutin_battler
+    names = ResearchMod.enemy_all_cutin_file_names(enemy)
+    open_research_mod_battle_cutin_list(enemy.name, names, :enemy_mode)
+  end
+
+  def open_research_mod_battle_cutin_list(owner_label, names, return_mode)
+    if names.empty?
+      active_window = return_mode == :enemy_mode ?
+                      @research_mod_battle_cutin_enemy_mode_window :
+                      @research_mod_battle_cutin_battler_window
+      return research_mod_battle_cutin_empty(active_window)
+    end
+
+    @research_mod_battle_cutin_return_mode = return_mode
+    @research_mod_battle_cutin_battler_window.hide
+    @research_mod_battle_cutin_battler_window.deactivate
+    @research_mod_battle_cutin_enemy_mode_window.hide
+    @research_mod_battle_cutin_enemy_mode_window.deactivate
+    @research_mod_battle_cutin_list_window.setup(owner_label, names)
+    @research_mod_battle_cutin_help_window.show
+    @research_mod_battle_cutin_list_window.show
+    @research_mod_battle_cutin_list_window.activate
+  end
+
+  def research_mod_battle_cutin_empty(window)
+    Sound.play_buzzer
+    window.activate
+  end
+
+  def load_previous_research_mod_battle_cutin_page
+    @research_mod_battle_cutin_list_window.previous_page
+    @research_mod_battle_cutin_list_window.activate
+  end
+
+  def load_next_research_mod_battle_cutin_page
+    @research_mod_battle_cutin_list_window.next_page
+    @research_mod_battle_cutin_list_window.activate
+  end
+
+  def open_research_mod_battle_cutin_preview(index = nil)
+    if index
+      file_name = @research_mod_battle_cutin_list_window.entries[index]
+    else
+      index, file_name = @research_mod_battle_cutin_list_window.current_ext
+    end
+    return unless file_name
+
+    preview = ResearchModActorCutinPreview.new(
+      file_name, Graphics.height - @research_mod_battle_cutin_help_window.height
+    )
+    dispose_research_mod_battle_cutin_preview
+    @research_mod_battle_cutin_preview = preview
+    @research_mod_battle_cutin_preview_index = index
+    @research_mod_battle_cutin_list_window.hide
+    @research_mod_battle_cutin_list_window.deactivate
+    @research_mod_battle_cutin_help_window.z = 700
+    @research_mod_battle_cutin_help_window.set_text(
+      format('Cut-in %d/%d\n文件名：%s\n←/→：上一张/下一张　取消：返回列表',
+             index + 1, @research_mod_battle_cutin_list_window.entries.size,
+             file_name).gsub(92.chr + 'n', 10.chr)
+    )
+    true
+  rescue
+    Sound.play_buzzer
+    @research_mod_battle_cutin_help_window.set_text(
+      format('图片无法读取：Graphics/Pictures/%s\n可能是文件缺失或资源配置无效。\n取消：返回列表',
+             file_name).gsub(92.chr + 'n', 10.chr)
+    )
+    @research_mod_battle_cutin_list_window.activate unless @research_mod_battle_cutin_preview
+    false
+  end
+
+  def update_research_mod_battle_cutin_preview
+    return unless @research_mod_battle_cutin_preview
+
+    if Input.trigger?(:B)
+      Sound.play_cancel
+      close_research_mod_battle_cutin_preview
+    elsif Input.repeat?(:RIGHT) || Input.repeat?(:R)
+      switch_research_mod_battle_cutin_preview(1)
+    elsif Input.repeat?(:LEFT) || Input.repeat?(:L)
+      switch_research_mod_battle_cutin_preview(-1)
+    end
+  end
+
+  def switch_research_mod_battle_cutin_preview(amount)
+    entries = @research_mod_battle_cutin_list_window.entries
+    return if entries.empty?
+
+    index = (@research_mod_battle_cutin_preview_index + amount) % entries.size
+    Sound.play_cursor if open_research_mod_battle_cutin_preview(index)
+  end
+
+  def close_research_mod_battle_cutin_preview
+    index = @research_mod_battle_cutin_preview_index
+    dispose_research_mod_battle_cutin_preview
+    @research_mod_battle_cutin_preview_index = nil
+    @research_mod_battle_cutin_list_window.select_global_index(index) if index
+    @research_mod_battle_cutin_list_window.show
+    @research_mod_battle_cutin_list_window.activate
+    @research_mod_battle_cutin_help_window.z = 570
+    @research_mod_battle_cutin_list_window.update_help
+  end
+
+  def dispose_research_mod_battle_cutin_preview
+    @research_mod_battle_cutin_preview.dispose if @research_mod_battle_cutin_preview
+    @research_mod_battle_cutin_preview = nil
+  end
+
+  def close_research_mod_battle_cutin_list
+    @research_mod_battle_cutin_list_window.hide
+    @research_mod_battle_cutin_list_window.deactivate
+    @research_mod_battle_cutin_list_window.unselect
+    @research_mod_battle_cutin_help_window.hide
+    if @research_mod_battle_cutin_return_mode == :enemy_mode
+      @research_mod_battle_cutin_enemy_mode_window.show
+      @research_mod_battle_cutin_enemy_mode_window.activate
+    else
+      @research_mod_battle_cutin_battler_window.show
+      @research_mod_battle_cutin_battler_window.activate
+    end
+  end
+
+  def close_research_mod_enemy_cutin_mode
+    @research_mod_battle_cutin_enemy_mode_window.hide
+    @research_mod_battle_cutin_enemy_mode_window.deactivate
+    @research_mod_battle_cutin_enemy_mode_window.unselect
+    @research_mod_battle_cutin_battler_window.show
+    @research_mod_battle_cutin_battler_window.activate
+  end
+
+  def close_research_mod_battle_cutin_battlers
+    @research_mod_battle_cutin_battler_window.hide
+    @research_mod_battle_cutin_battler_window.deactivate
+    @research_mod_battle_cutin_battler_window.unselect
+    @research_mod_battle_cutin_type_window.show
+    @research_mod_battle_cutin_type_window.activate
+  end
+
+  def close_research_mod_battle_cutin
+    @research_mod_battle_cutin_type_window.hide
+    @research_mod_battle_cutin_type_window.deactivate
+    @research_mod_battle_cutin_type_window.unselect
+    @research_mod_battle_cutin_side = nil
+    @research_mod_battle_cutin_battler = nil
+    @party_command_window.activate
   end
 
   def open_research_mod_battle_record
@@ -2936,6 +5588,402 @@ class Scene_Battle < Scene_Base
     @research_mod_party_status_window.hide
     @research_mod_party_status_window.deactivate
     @research_mod_party_status_window.unselect
+    @party_command_window.activate
+  end
+
+  def open_research_mod_battle_dialogue
+    @party_command_window.deactivate
+    @research_mod_battle_dialogue_main_window.select(0)
+    @research_mod_battle_dialogue_main_window.show
+    @research_mod_battle_dialogue_main_window.activate
+  end
+
+  def research_mod_dialogue_battler_entry(battler, side, entries)
+    id = ResearchMod.battler_dialogue_id(battler)
+    side_label = side == :party ? '我方' : '敌方'
+    {
+      :label => format('[%s] %4d  %s　（%d条）', side_label, id,
+                       battler.name, entries.size),
+      :battler => battler, :side => side, :entries => entries,
+      :enabled => !entries.empty?
+    }
+  end
+
+  def research_mod_party_skill_battler_entries
+    research_mod_battle_actors.map do |actor|
+      entries = ResearchMod.actor_skill_dialogue_entries(actor)
+      research_mod_dialogue_battler_entry(actor, :party, entries)
+    end
+  end
+
+  def research_mod_enemy_skill_battler_entries
+    research_mod_visible_enemies.map do |enemy|
+      research_mod_dialogue_battler_entry(enemy, :enemy, [true])
+    end
+  end
+
+  def research_mod_special_dialogue_entries(enemy, mode)
+    case mode
+    when :dialogue
+      entries = ResearchMod.enemy_dialogue_entries(enemy, :special).select do |entry|
+        entry[:skill_id]
+      end.map do |entry|
+        dialogue_entry = entry.dup
+        dialogue_entry[:category] = '对话台词'
+        dialogue_entry
+      end
+      entries
+    when :choice_response
+      ResearchMod.enemy_choice_response_entries(enemy)
+    when :hero
+      ResearchMod.hero_skill_dialogue_entries(enemy)
+    when :dance
+      ResearchMod.dance_skill_dialogue_entries(enemy)
+    when :sing
+      ResearchMod.sing_skill_dialogue_entries(enemy)
+    when :transformation
+      ResearchMod.transformation_skill_dialogue_entries(enemy)
+    when :playful
+      ResearchMod.enemy_dialogue_entries(enemy, :playful)
+    when :temptation
+      ResearchMod.enemy_dialogue_entries(enemy, :temptation)
+    else
+      []
+    end
+  end
+
+  def research_mod_special_dialogue_battler_entries(mode)
+    entries = case mode
+              when :playful
+                research_mod_battle_actors.map do |actor|
+                  dialogues = ResearchMod.actor_playful_dialogue_entries(actor)
+                  research_mod_dialogue_battler_entry(actor, :party, dialogues)
+                end
+              when :temptation
+                research_mod_battle_actors.map do |actor|
+                  dialogues = ResearchMod.actor_temptation_dialogue_entries(actor)
+                  research_mod_dialogue_battler_entry(actor, :party, dialogues)
+                end
+              when :hero
+                research_mod_battle_actors.map do |actor|
+                  dialogues = ResearchMod.hero_skill_dialogue_entries(actor)
+                  research_mod_dialogue_battler_entry(actor, :party, dialogues)
+                end
+              when :dance
+                research_mod_battle_actors.map do |actor|
+                  dialogues = ResearchMod.dance_skill_dialogue_entries(actor)
+                  research_mod_dialogue_battler_entry(actor, :party, dialogues)
+                end
+              when :sing
+                research_mod_battle_actors.map do |actor|
+                  dialogues = ResearchMod.sing_skill_dialogue_entries(actor)
+                  research_mod_dialogue_battler_entry(actor, :party, dialogues)
+                end
+              when :transformation
+                research_mod_battle_actors.map do |actor|
+                  dialogues = ResearchMod.transformation_skill_dialogue_entries(actor)
+                  research_mod_dialogue_battler_entry(actor, :party, dialogues)
+                end
+              else
+                []
+              end
+    return entries if mode == :playful
+
+    entries.concat(research_mod_visible_enemies.map do |enemy|
+      enemy_entries = research_mod_special_dialogue_entries(enemy, mode)
+      research_mod_dialogue_battler_entry(enemy, :enemy, enemy_entries)
+    end)
+    entries
+  end
+
+  def research_mod_reaction_battler_entries
+    entries = research_mod_battle_actors.map do |actor|
+      reactions = ResearchMod.battler_reaction_entries(actor)
+      research_mod_dialogue_battler_entry(actor, :party, reactions)
+    end
+    entries.concat(research_mod_visible_enemies.map do |enemy|
+      reactions = ResearchMod.battler_reaction_entries(enemy)
+      research_mod_dialogue_battler_entry(enemy, :enemy, reactions)
+    end)
+    entries
+  end
+
+  def research_mod_combo_source_entries
+    entries = research_mod_party_skill_battler_entries
+    entries.concat(research_mod_visible_enemies.map do |enemy|
+      dialogues = ResearchMod.enemy_dialogue_entries(enemy, :all_skills)
+      research_mod_dialogue_battler_entry(enemy, :enemy, dialogues)
+    end)
+    entries
+  end
+
+  def open_research_mod_dialogue_battlers(entries, flow, cancel_label = '返回',
+                                           return_mode = :main)
+    if entries.empty?
+      Sound.play_buzzer
+      @research_mod_battle_dialogue_main_window.activate
+      return
+    end
+
+    @research_mod_battle_dialogue_flow = flow
+    @research_mod_battle_dialogue_battler_return = return_mode
+    @research_mod_battle_dialogue_main_window.hide
+    @research_mod_battle_dialogue_main_window.deactivate
+    @research_mod_battle_dialogue_special_mode_window.hide
+    @research_mod_battle_dialogue_special_mode_window.deactivate
+    @research_mod_battle_dialogue_battler_window.setup(entries, cancel_label)
+    @research_mod_battle_dialogue_battler_window.show
+    @research_mod_battle_dialogue_battler_window.activate
+  end
+
+  def open_research_mod_party_skill_dialogue
+    open_research_mod_dialogue_battlers(
+      research_mod_party_skill_battler_entries, :party_skill, '返回对白模拟'
+    )
+  end
+
+  def open_research_mod_enemy_skill_dialogue
+    open_research_mod_dialogue_battlers(
+      research_mod_enemy_skill_battler_entries, :enemy_skill, '返回对白模拟'
+    )
+  end
+
+  def open_research_mod_special_dialogue
+    @research_mod_battle_dialogue_main_window.hide
+    @research_mod_battle_dialogue_main_window.deactivate
+    @research_mod_battle_dialogue_special_mode_window.select(0)
+    @research_mod_battle_dialogue_special_mode_window.show
+    @research_mod_battle_dialogue_special_mode_window.activate
+  end
+
+  def select_research_mod_special_dialogue_mode
+    mode = @research_mod_battle_dialogue_special_mode_window.current_symbol
+    @research_mod_special_dialogue_mode = mode
+    open_research_mod_dialogue_battlers(
+      research_mod_special_dialogue_battler_entries(mode),
+      :special_dialogue, '返回特殊台词分类', :special_mode
+    )
+  end
+
+  def open_research_mod_reaction_dialogue
+    open_research_mod_dialogue_battlers(
+      research_mod_reaction_battler_entries, :reaction, '返回对白模拟'
+    )
+  end
+
+  def open_research_mod_combo_dialogue
+    @research_mod_combo_source_entry = nil
+    open_research_mod_dialogue_battlers(
+      research_mod_combo_source_entries, :combo_source, '返回对白模拟'
+    )
+  end
+
+  def select_research_mod_battle_dialogue_battler
+    data = @research_mod_battle_dialogue_battler_window.current_ext
+    unless data && data[:battler]
+      Sound.play_buzzer
+      @research_mod_battle_dialogue_battler_window.activate
+      return
+    end
+
+    @research_mod_battle_dialogue_battler = data[:battler]
+    case @research_mod_battle_dialogue_flow
+    when :enemy_skill
+      @research_mod_battle_dialogue_battler_window.hide
+      @research_mod_battle_dialogue_battler_window.deactivate
+      @research_mod_battle_dialogue_enemy_mode_window.select(0)
+      @research_mod_battle_dialogue_enemy_mode_window.show
+      @research_mod_battle_dialogue_enemy_mode_window.activate
+    when :combo_target
+      open_research_mod_battle_dialogue_entries(
+        data[:battler], data[:entries], data[:side] == :party ? '我方目标' : '敌方目标',
+        :combo_target_battlers, :combo_reaction
+      )
+    else
+      selection_mode = @research_mod_battle_dialogue_flow == :combo_source ?
+                       :combo_source : :single
+      return_mode = @research_mod_battle_dialogue_flow == :combo_source ?
+                    :combo_source_battlers : :battlers
+      owner_label = data[:side] == :party ? '我方' : '敌方'
+      @research_mod_combo_source_battler_data = data if selection_mode == :combo_source
+      open_research_mod_battle_dialogue_entries(
+        data[:battler], data[:entries], owner_label, return_mode, selection_mode
+      )
+    end
+  end
+
+  def select_research_mod_battle_dialogue_enemy_mode
+    enemy = @research_mod_battle_dialogue_battler
+    mode = @research_mod_battle_dialogue_enemy_mode_window.current_symbol
+    entries = ResearchMod.enemy_dialogue_entries(enemy, mode)
+    if entries.empty?
+      Sound.play_buzzer
+      @research_mod_battle_dialogue_enemy_mode_window.activate
+      return
+    end
+
+    open_research_mod_battle_dialogue_entries(
+      enemy, entries, '敌方', :enemy_mode, :single
+    )
+  end
+
+  def open_research_mod_battle_dialogue_entries(battler, entries, owner_label,
+                                                 return_mode, selection_mode)
+    if entries.empty?
+      Sound.play_buzzer
+      @research_mod_battle_dialogue_battler_window.activate
+      return
+    end
+
+    @research_mod_battle_dialogue_list_return = return_mode
+    @research_mod_battle_dialogue_selection_mode = selection_mode
+    @research_mod_battle_dialogue_battler_window.hide
+    @research_mod_battle_dialogue_battler_window.deactivate
+    @research_mod_battle_dialogue_enemy_mode_window.hide
+    @research_mod_battle_dialogue_enemy_mode_window.deactivate
+    @research_mod_battle_dialogue_special_mode_window.hide
+    @research_mod_battle_dialogue_special_mode_window.deactivate
+    @research_mod_enemy_dialogue_window.setup(
+      battler, entries, owner_label, '返回上一级'
+    )
+    @research_mod_enemy_dialogue_help_window.show
+    @research_mod_enemy_dialogue_window.show
+    @research_mod_enemy_dialogue_window.activate
+  end
+
+  def execute_research_mod_battle_dialogue
+    entry = @research_mod_enemy_dialogue_window.current_ext
+    unless entry && entry[:word]
+      Sound.play_buzzer
+      @research_mod_enemy_dialogue_window.activate
+      return
+    end
+
+    case @research_mod_battle_dialogue_selection_mode
+    when :combo_source
+      @research_mod_combo_source_entry = entry
+      @research_mod_enemy_dialogue_window.hide
+      @research_mod_enemy_dialogue_window.deactivate
+      @research_mod_enemy_dialogue_help_window.hide
+      @research_mod_battle_dialogue_flow = :combo_target
+      @research_mod_battle_dialogue_battler_return = :combo_source_dialogue
+      @research_mod_battle_dialogue_battler_window.setup(
+        research_mod_reaction_battler_entries, '返回释放台词列表'
+      )
+      @research_mod_battle_dialogue_battler_window.show
+      @research_mod_battle_dialogue_battler_window.activate
+    when :combo_reaction
+      play_research_mod_dialogue_words(@research_mod_combo_source_entry, entry)
+    else
+      play_research_mod_dialogue_words(entry)
+    end
+  end
+
+  def play_research_mod_dialogue_words(*entries)
+    @research_mod_enemy_dialogue_window.hide
+    @research_mod_enemy_dialogue_window.deactivate
+    @research_mod_enemy_dialogue_help_window.hide
+    entries.compact.each do |entry|
+      words = entry[:words] || [entry[:word]]
+      words.compact.each do |word|
+        word.execute
+        wait_for_message
+      end
+    end
+    @research_mod_enemy_dialogue_help_window.show
+    @research_mod_enemy_dialogue_window.show
+    @research_mod_enemy_dialogue_window.activate
+    @research_mod_enemy_dialogue_window.update_help
+  end
+
+  def load_previous_research_mod_battle_dialogue_page
+    @research_mod_enemy_dialogue_window.previous_page
+    @research_mod_enemy_dialogue_window.activate
+  end
+
+  def load_next_research_mod_battle_dialogue_page
+    @research_mod_enemy_dialogue_window.next_page
+    @research_mod_enemy_dialogue_window.activate
+  end
+
+  def close_research_mod_battle_dialogue_list
+    @research_mod_enemy_dialogue_window.hide
+    @research_mod_enemy_dialogue_window.deactivate
+    @research_mod_enemy_dialogue_window.unselect
+    @research_mod_enemy_dialogue_help_window.hide
+    if @research_mod_battle_dialogue_list_return == :enemy_mode
+      @research_mod_battle_dialogue_enemy_mode_window.show
+      @research_mod_battle_dialogue_enemy_mode_window.activate
+    else
+      @research_mod_battle_dialogue_battler_window.show
+      @research_mod_battle_dialogue_battler_window.activate
+    end
+  end
+
+  def close_research_mod_battle_dialogue_enemy_mode
+    @research_mod_battle_dialogue_enemy_mode_window.hide
+    @research_mod_battle_dialogue_enemy_mode_window.deactivate
+    @research_mod_battle_dialogue_enemy_mode_window.unselect
+    @research_mod_battle_dialogue_battler_window.show
+    @research_mod_battle_dialogue_battler_window.activate
+  end
+
+  def close_research_mod_special_dialogue_mode
+    @research_mod_battle_dialogue_special_mode_window.hide
+    @research_mod_battle_dialogue_special_mode_window.deactivate
+    @research_mod_battle_dialogue_special_mode_window.unselect
+    @research_mod_battle_dialogue_main_window.show
+    @research_mod_battle_dialogue_main_window.activate
+  end
+
+  def close_research_mod_battle_dialogue_battlers
+    @research_mod_battle_dialogue_battler_window.hide
+    @research_mod_battle_dialogue_battler_window.deactivate
+    @research_mod_battle_dialogue_battler_window.unselect
+    if @research_mod_battle_dialogue_battler_return == :combo_source_dialogue
+      @research_mod_battle_dialogue_flow = :combo_source
+      @research_mod_battle_dialogue_battler_return = :main
+      @research_mod_battle_dialogue_list_return = :combo_source_battlers
+      @research_mod_battle_dialogue_selection_mode = :combo_source
+      @research_mod_battle_dialogue_battler_window.setup(
+        research_mod_combo_source_entries, '返回对白模拟'
+      )
+      @research_mod_battle_dialogue_battler_window.hide
+      @research_mod_battle_dialogue_battler_window.deactivate
+      @research_mod_battle_dialogue_battler_window.unselect
+      data = @research_mod_combo_source_battler_data
+      if data
+        owner_label = data[:side] == :party ? '我方' : '敌方'
+        @research_mod_enemy_dialogue_window.setup(
+          data[:battler], data[:entries], owner_label, '返回上一级'
+        )
+        @research_mod_enemy_dialogue_window.select_entry(@research_mod_combo_source_entry)
+      end
+      @research_mod_enemy_dialogue_help_window.show
+      @research_mod_enemy_dialogue_window.show
+      @research_mod_enemy_dialogue_window.activate
+      @research_mod_enemy_dialogue_window.update_help
+    elsif @research_mod_battle_dialogue_battler_return == :special_mode
+      @research_mod_battle_dialogue_special_mode_window.show
+      @research_mod_battle_dialogue_special_mode_window.activate
+    else
+      @research_mod_battle_dialogue_main_window.show
+      @research_mod_battle_dialogue_main_window.activate
+    end
+  end
+
+  def close_research_mod_battle_dialogue
+    @research_mod_battle_dialogue_main_window.hide
+    @research_mod_battle_dialogue_main_window.deactivate
+    @research_mod_battle_dialogue_main_window.unselect
+    @research_mod_battle_dialogue_flow = nil
+    @research_mod_battle_dialogue_battler_return = nil
+    @research_mod_battle_dialogue_list_return = nil
+    @research_mod_battle_dialogue_selection_mode = nil
+    @research_mod_battle_dialogue_battler = nil
+    @research_mod_special_dialogue_mode = nil
+    @research_mod_combo_source_entry = nil
+    @research_mod_combo_source_battler_data = nil
     @party_command_window.activate
   end
 
@@ -3020,6 +6068,261 @@ class Scene_Battle < Scene_Base
     @party_command_window.activate
   end
 
+  def hide_research_mod_battle_edit_window(window)
+    return unless window
+
+    window.hide
+    window.deactivate
+    window.unselect
+  end
+
+  def open_research_mod_battle_edit_custom_talk
+    @research_mod_battle_dialogue_main_window.hide
+    @research_mod_battle_dialogue_main_window.deactivate
+    @research_mod_battle_edit_help_window.show
+    @research_mod_battle_edit_help_window.set_text(
+      '从敌我双方选择发起者，再选择敌方目标；仅播放对白，不消耗回合。'
+    )
+    initiators = research_mod_battle_actors + research_mod_visible_enemies
+    @research_mod_battle_edit_talk_actor_window.setup(initiators)
+  end
+
+  def select_research_mod_battle_edit_talk_actor
+    data = @research_mod_battle_edit_talk_actor_window.current_ext
+    unless data && data[:battler]
+      Sound.play_buzzer
+      @research_mod_battle_edit_talk_actor_window.activate
+      return
+    end
+
+    @research_mod_battle_edit_talk_actor = data[:battler]
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_talk_actor_window)
+    @research_mod_battle_edit_talk_enemy_window.setup(
+      research_mod_visible_enemies, @research_mod_battle_edit_talk_actor
+    )
+  end
+
+  def select_research_mod_battle_edit_talk_enemy
+    data = @research_mod_battle_edit_talk_enemy_window.current_ext
+    unless data && data[:enemy] && !data[:entries].empty?
+      Sound.play_buzzer
+      @research_mod_battle_edit_talk_enemy_window.activate
+      return
+    end
+
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_talk_enemy_window)
+    @research_mod_battle_edit_talk_list_window.setup(
+      data[:enemy], data[:entries], @research_mod_battle_edit_talk_actor
+    )
+  end
+
+  def play_research_mod_battle_edit_talk
+    entry = @research_mod_battle_edit_talk_list_window.current_ext
+    unless entry && entry[:word]
+      Sound.play_buzzer
+      @research_mod_battle_edit_talk_list_window.activate
+      return
+    end
+
+    actor_entries = ResearchMod.talk_initiator_dialogue_entries(
+      @research_mod_battle_edit_talk_actor
+    )
+    actor_entry = actor_entries.first
+    @research_mod_battle_edit_talk_entry = entry
+    words = []
+    words.concat(actor_entry[:words] || [actor_entry[:word]]) if actor_entry
+    words.concat(entry[:words] || [entry[:word]])
+    play_research_mod_battle_edit_talk_words(words)
+
+    all_choices = ResearchMod.enemy_choice_response_entries(
+      @research_mod_battle_edit_talk_list_window.enemy
+    )
+    talk_index = (entry[:custom_talk_index] || entry[:word_index]).to_i
+    choices = all_choices.select do |choice|
+      choice[:choice_group_index].to_i == talk_index
+    end
+    if choices.empty?
+      group_ids = all_choices.map { |choice| choice[:choice_group_index].to_i }.uniq
+      choices = all_choices if group_ids.size == 1
+    end
+    if choices.empty?
+      close_research_mod_battle_edit_custom_talk
+    else
+      play_research_mod_battle_edit_talk_native_choices(choices)
+    end
+  end
+
+  def play_research_mod_battle_edit_talk_words(words)
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_talk_list_window)
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_talk_choice_window)
+    @research_mod_battle_edit_help_window.hide
+    Array(words).compact.each do |word|
+      word.execute
+      wait_for_message
+    end
+    @research_mod_battle_edit_help_window.hide
+  end
+
+  def play_research_mod_battle_edit_talk_native_choices(entries)
+    prompt_words = entries.first[:prompt_words] || []
+    play_research_mod_battle_edit_talk_words(prompt_words)
+    selected_index = nil
+    choice_entry = entries.first
+    $game_message.position = choice_entry[:choice_position].nil? ? 2 : choice_entry[:choice_position].to_i
+    $game_message.background = choice_entry[:choice_background].nil? ? 0 : choice_entry[:choice_background].to_i
+    $game_message.instance_variable_set(:@research_mod_choice_right, true)
+    choice_bottom_y = if @message_window
+                        Graphics.height - @message_window.height
+                      else
+                        @party_command_window.y
+                      end
+    $game_message.instance_variable_set(:@research_mod_choice_bottom_y, choice_bottom_y)
+    choices = entries.map { |entry| entry[:choice_label].to_s }
+    choices.each { |choice| $game_message.choices.push(choice) }
+    $game_message.choice_cancel_type = choices.size
+    $game_message.choice_proc = proc { |index| selected_index = index }
+    wait_for_message
+    if selected_index && selected_index < entries.size
+      words = entries[selected_index][:response_words] || []
+      play_research_mod_battle_edit_talk_words(words)
+    end
+    $game_message.instance_variable_set(:@research_mod_choice_right, false)
+    $game_message.instance_variable_set(:@research_mod_choice_bottom_y, nil)
+    @research_mod_battle_edit_help_window.show
+    @research_mod_battle_edit_talk_list_window.show
+    @research_mod_battle_edit_talk_list_window.activate
+  end
+
+  def close_research_mod_battle_edit_talk_enemy
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_talk_enemy_window)
+    @research_mod_battle_edit_talk_actor_window.show
+    @research_mod_battle_edit_talk_actor_window.activate
+  end
+
+  def close_research_mod_battle_edit_talk_list
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_talk_list_window)
+    @research_mod_battle_edit_talk_enemy_window.show
+    @research_mod_battle_edit_talk_enemy_window.activate
+  end
+
+  def close_research_mod_battle_edit_custom_talk
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_talk_actor_window)
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_talk_enemy_window)
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_talk_list_window)
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_talk_choice_window)
+    @research_mod_battle_edit_help_window.hide
+    @research_mod_battle_dialogue_main_window.show
+    @research_mod_battle_dialogue_main_window.activate
+  end
+  def open_research_mod_battle_edit
+    @party_command_window.deactivate
+    @research_mod_battle_edit_help_window.show
+    @research_mod_battle_edit_main_window.refresh
+    @research_mod_battle_edit_main_window.open_window
+  end
+
+  def open_research_mod_battle_edit_states
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_main_window)
+    @research_mod_battle_edit_state_window.refresh
+    @research_mod_battle_edit_state_window.open_window
+  end
+
+  def close_research_mod_battle_edit_states
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_state_window)
+    @research_mod_battle_edit_main_window.open_window
+  end
+
+  def open_research_mod_battle_edit_temptation
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_state_window)
+    @research_mod_battle_edit_action_window.refresh
+    @research_mod_battle_edit_action_window.open_window
+  end
+
+  def close_research_mod_battle_edit_temptation
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_action_window)
+    @research_mod_battle_edit_state_window.open_window
+  end
+
+  def open_research_mod_battle_edit_add_targets
+    open_research_mod_battle_edit_targets(:add)
+  end
+
+  def open_research_mod_battle_edit_remove_targets
+    open_research_mod_battle_edit_targets(:remove)
+  end
+
+  def open_research_mod_battle_edit_targets(action)
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_action_window)
+    @research_mod_battle_edit_target_window.setup(action)
+  end
+
+  def close_research_mod_battle_edit_targets
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_target_window)
+    @research_mod_battle_edit_action_window.refresh
+    @research_mod_battle_edit_action_window.open_window
+  end
+
+  def confirm_research_mod_battle_edit_target
+    targets = @research_mod_battle_edit_target_window.current_ext
+    if !targets || targets.empty?
+      Sound.play_buzzer
+      @research_mod_battle_edit_target_window.activate
+      return
+    end
+
+    @research_mod_battle_edit_action = @research_mod_battle_edit_target_window.action
+    @research_mod_battle_edit_targets = targets
+    label = @research_mod_battle_edit_target_window.target_label
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_target_window)
+    @research_mod_battle_edit_confirm_window.setup(
+      @research_mod_battle_edit_action, label
+    )
+  end
+
+  def cancel_research_mod_battle_edit_confirm
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_confirm_window)
+    @research_mod_battle_edit_target_window.show
+    @research_mod_battle_edit_target_window.activate
+    @research_mod_battle_edit_target_window.update_help
+  end
+
+  def execute_research_mod_battle_edit
+    changed = 0
+    targets = @research_mod_battle_edit_targets || []
+    targets.each do |battler|
+      result = if @research_mod_battle_edit_action == :add
+                 ResearchMod.force_add_battle_state(
+                   battler, ResearchMod::TEMPTATION_STATE_ID
+                 )
+               else
+                 ResearchMod.force_remove_battle_state(
+                   battler, ResearchMod::TEMPTATION_STATE_ID
+                 )
+               end
+      changed += 1 if result
+    end
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_confirm_window)
+    @research_mod_battle_edit_target_window.setup(@research_mod_battle_edit_action)
+    if changed > 0
+      @research_mod_battle_edit_help_window.set_text(
+        format('操作完成：已修改 %d 名战斗成员。', changed)
+      )
+    else
+      Sound.play_buzzer
+      @research_mod_battle_edit_help_window.set_text(
+        '没有成员被修改。请检查目标状态或全员誘惑免疫开关。'
+      )
+    end
+  end
+
+  def close_research_mod_battle_edit
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_main_window)
+    @research_mod_battle_edit_help_window.hide
+    @research_mod_battle_edit_action = nil
+    @research_mod_battle_edit_targets = nil
+    @party_command_window.activate
+  end
+
   def open_research_mod_enemy_status
     enemies = @research_mod_enemy_status_window.battle_enemies
     if enemies.empty?
@@ -3047,9 +6350,11 @@ class Scene_Battle < Scene_Base
   end
 
   def update
+    update_research_mod_audio_overlay
     research_mod_enemy_status_update
     update_research_mod_enemy_status
     update_research_mod_party_status
+    update_research_mod_battle_cutin_preview
   end
 
   def update_research_mod_enemy_status
@@ -3079,21 +6384,60 @@ class Scene_Battle < Scene_Base
   end
 
   def terminate
+    dispose_research_mod_audio_overlay
+    dispose_research_mod_battle_cutin_preview
     windows = [@research_mod_enemy_status_window,
                @research_mod_party_status_window,
                @research_mod_battle_record_window,
+               @research_mod_battle_cutin_type_window,
+               @research_mod_battle_cutin_battler_window,
+               @research_mod_battle_cutin_enemy_mode_window,
+               @research_mod_battle_cutin_list_window,
+               @research_mod_battle_cutin_help_window,
+               @research_mod_battle_dialogue_main_window,
+               @research_mod_battle_dialogue_battler_window,
+               @research_mod_battle_dialogue_enemy_mode_window,
+               @research_mod_battle_dialogue_special_mode_window,
                @research_mod_enemy_dialogue_enemy_window,
                @research_mod_enemy_dialogue_window,
-               @research_mod_enemy_dialogue_help_window]
+               @research_mod_enemy_dialogue_help_window,
+               @research_mod_battle_edit_help_window,
+               @research_mod_battle_edit_main_window,
+               @research_mod_battle_edit_state_window,
+               @research_mod_battle_edit_action_window,
+               @research_mod_battle_edit_target_window,
+               @research_mod_battle_edit_confirm_window,
+               @research_mod_battle_edit_talk_actor_window,
+               @research_mod_battle_edit_talk_enemy_window,
+               @research_mod_battle_edit_talk_list_window,
+               @research_mod_battle_edit_talk_choice_window]
     windows.each do |window|
       window.dispose if window && !window.disposed?
     end
     @research_mod_enemy_status_window = nil
     @research_mod_party_status_window = nil
     @research_mod_battle_record_window = nil
+    @research_mod_battle_cutin_type_window = nil
+    @research_mod_battle_cutin_battler_window = nil
+    @research_mod_battle_cutin_enemy_mode_window = nil
+    @research_mod_battle_cutin_list_window = nil
+    @research_mod_battle_cutin_help_window = nil
+    @research_mod_battle_dialogue_main_window = nil
+    @research_mod_battle_dialogue_battler_window = nil
+    @research_mod_battle_dialogue_enemy_mode_window = nil
     @research_mod_enemy_dialogue_enemy_window = nil
     @research_mod_enemy_dialogue_window = nil
     @research_mod_enemy_dialogue_help_window = nil
+    @research_mod_battle_edit_help_window = nil
+    @research_mod_battle_edit_main_window = nil
+    @research_mod_battle_edit_state_window = nil
+    @research_mod_battle_edit_action_window = nil
+    @research_mod_battle_edit_target_window = nil
+    @research_mod_battle_edit_confirm_window = nil
+    @research_mod_battle_edit_talk_actor_window = nil
+    @research_mod_battle_edit_talk_enemy_window = nil
+    @research_mod_battle_edit_talk_list_window = nil
+    @research_mod_battle_edit_talk_choice_window = nil
     research_mod_enemy_status_terminate
   end
 end
@@ -3117,6 +6461,72 @@ class Window_ResearchModAudioInfoCommand < Window_Command
     add_command('刷新信息', :refresh)
     add_command('返回', :cancel)
   end
+end
+
+class Window_ResearchModAudioOverlay < Window_Base
+  def initialize
+    width = [420, Graphics.width - 16].min
+    super(Graphics.width - width - 8, 8, width, fitting_height(2))
+    self.z = 900
+    self.opacity = 208
+    @audio_signature = nil
+    update_audio
+  end
+
+  def update_audio
+    signature = ResearchMod.current_audio_overlay_signature
+    return if signature == @audio_signature
+
+    @audio_signature = signature
+    refresh
+  end
+
+  def refresh
+    contents.clear
+    bgm_name = @audio_signature[0][0].to_s
+    bgs_name = @audio_signature[1][0].to_s
+    bgm_name = '无' if bgm_name.empty?
+    bgs_name = '无' if bgs_name.empty?
+    bgm_name = ResearchMod.battle_dialogue_display_text(bgm_name, 46)
+    bgs_name = ResearchMod.battle_dialogue_display_text(bgs_name, 46)
+    draw_text(0, 0, contents.width, line_height, 'BGM：' + bgm_name)
+    draw_text(0, line_height, contents.width, line_height, 'BGS：' + bgs_name)
+  rescue
+    contents.clear if contents && !contents.disposed?
+    draw_text(0, 0, contents.width, line_height, '当前音乐：无法读取')
+  end
+end
+
+module ResearchModAudioOverlayScene
+  def create_research_mod_audio_overlay
+    dispose_research_mod_audio_overlay
+    return unless ResearchMod.audio_overlay_enabled?
+
+    @research_mod_audio_overlay_window = Window_ResearchModAudioOverlay.new
+  end
+
+  def update_research_mod_audio_overlay
+    if ResearchMod.audio_overlay_enabled?
+      if !@research_mod_audio_overlay_window ||
+         @research_mod_audio_overlay_window.disposed?
+        @research_mod_audio_overlay_window = Window_ResearchModAudioOverlay.new
+      else
+        @research_mod_audio_overlay_window.update_audio
+      end
+    else
+      dispose_research_mod_audio_overlay
+    end
+  end
+
+  def dispose_research_mod_audio_overlay
+    window = @research_mod_audio_overlay_window
+    window.dispose if window && !window.disposed?
+    @research_mod_audio_overlay_window = nil
+  end
+end
+
+class Scene_Battle
+  include ResearchModAudioOverlayScene
 end
 
 class Window_ResearchModAuthorInfoCommand < Window_Command
@@ -3181,8 +6591,14 @@ class Window_ResearchModCommand < Window_Command
     add_command('保存当前角色备份', :backup)
     add_command('恢复当前角色备份', :restore, ResearchMod.snapshot?(@actor))
     add_command('---------- 角色与队伍 ----------', :separator, false)
+    party_member_max = ResearchMod.value_current(
+      ResearchMod.value_entry(:party_member_max)
+    )
+    add_command(format('队伍编成人数上限：%d', party_member_max), :party_member_max)
+    add_command(format('地图跟随显示人数：%d', ResearchMod.map_follower_count),
+                :map_follower_count)
     add_command('全可入队角色加入候补', :recruit_all)
-    add_command('全角色好感度设为30000', :set_all_love)
+    add_command('设置全角色好感度（默认30000）', :set_all_love)
     add_command('魔王城形态变化（无视事件）：' + (ResearchMod.persona_dialogue_compatibility? ? '开' : '关'), :persona_dialogue)
     add_command('---------- 查看与资源 ----------', :separator, false)
     add_command('角色图鉴', :actor_encyclopedia)
@@ -3196,6 +6612,7 @@ class Window_ResearchModCommand < Window_Command
                        ResearchMod.marriage_armors.size), :gain_all_marriage_armors)
     add_command('当前音乐信息', :audio_info)
     add_command('关于', :author_info)
+    add_command('卡关处理', :stuck_help)
     add_command('---------- 地图与事件 ----------', :separator, false)
     add_command('随意开战', :arbitrary_battle)
     add_command('任意地图传送', :teleport)
@@ -3209,15 +6626,25 @@ class Window_ResearchModCommand < Window_Command
     add_command('偷盗必定成功：' + (ResearchMod.steal_always_success? ? '开' : '关'), :steal_success)
     add_command('牛奶获取必定成功：' + (ResearchMod.milk_always_success? ? '开' : '关'), :milk_success)
     add_command('物品必定掉落：' + (ResearchMod.drop_always_success? ? '开' : '关'), :drop_success)
+    add_command('敌人诱惑事件禁止：' + (ResearchMod.temptation_disabled? ? '开' : '关'), :temptation_disabled)
     add_command('敌人诱惑事件无视HP：' + (ResearchMod.temptation_ignore_hp? ? '开' : '关'), :temptation_ignore_hp)
+    add_command('敌我全员誘惑免疫：' + (ResearchMod.temptation_immunity? ? '开' : '关'), :temptation_immunity)
+    add_command('战败后跳过败北事件：' + (ResearchMod.lose_event_skip? ? '开' : '关'), :lose_event_skip)
     add_command('我方攻击必中必杀：' + (ResearchMod.sure_hit_kill? ? '开' : '关'), :sure_hit_kill)
     add_command('穿墙模式：' + (ResearchMod.through_mode? ? '开' : '关'), :through_mode)
+    add_command('不遇敌：' + (ResearchMod.no_random_encounter? ? '开' : '关'), :no_random_encounter)
+
+    add_command('原版禁止遇敌：' + (ResearchMod.original_encounter_disabled? ? '开' : '关'), :original_encounter_disabled)
     add_command('防止鲁卡强制置顶：' + (ResearchMod.prevent_event_luca_front? ? '开' : '关'), :prevent_luca_front)
     add_command('敌人入队率100：' + (ResearchMod.follow_always_success? ? '开' : '关'), :follow_success)
     add_command('战斗显示敌方信息：' + (ResearchMod.battle_enemy_status? ? '开' : '关'), :battle_enemy_status)
     add_command('战斗显示我方信息：' + (ResearchMod.battle_party_status? ? '开' : '关'), :battle_party_status)
+    add_command('战斗双方Cut-in查看：' + (ResearchMod.battle_cutin_view? ? '开' : '关'), :battle_cutin_view)
     add_command('战斗记录：' + (ResearchMod.battle_record_enabled? ? '开' : '关'), :battle_record)
-    add_command('战斗手动敌人对话：' + (ResearchMod.manual_enemy_dialogue? ? '开' : '关'), :manual_enemy_dialogue)
+    add_command('战斗对白模拟：' + (ResearchMod.manual_enemy_dialogue? ? '开' : '关'), :manual_enemy_dialogue)
+    add_command('战斗修改菜单：' + (ResearchMod.battle_editor_enabled? ? '开' : '关'), :battle_editor)
+    add_command('当前音乐悬浮窗：' + (ResearchMod.audio_overlay_enabled? ? '开' : '关'), :audio_overlay)
+    add_command('实验功能', :experimental)
     add_command('返回菜单', :cancel)
   end
 
@@ -3225,8 +6652,14 @@ class Window_ResearchModCommand < Window_Command
     return unless help_window
 
     text = case current_symbol
-           when :recruit_all, :set_all_love
+           when :recruit_all
              '此操作会影响全局角色数据，可能影响全局成就判定。建议提前备份存档，再执行。'
+           when :set_all_love
+             '为所有有名称的角色统一设置好感度。按确定后输入0～9999999，默认30000；此操作会影响全局角色数据，建议提前备份存档。'
+           when :party_member_max
+             '设置最终队伍编成人数上限，允许8～99人。内部变量56保存的是超过基础8人的追加人数。'
+           when :map_follower_count
+             '设置地图上队首玩家之后的跟随角色数量。0表示不显示跟随者，最多99；数量过高可能明显降低地图性能。'
            when :candidate_dialogue
              '开启后，候补角色相关的魔王城对话可以在不满足原条件时查看。'
            when :all_dialogue_force_party
@@ -3238,11 +6671,19 @@ class Window_ResearchModCommand < Window_Command
            when :drop_success
              '开启后，敌人的物品掉落率视为必定成功，符合掉落条件的物品会掉落。'
            when :temptation_ignore_hp
-             '开启后，敌人诱惑事件不再检查当前HP是否低于原版触发条件。'
+             '开启后，敌人诱惑事件不再检查当前HP是否低于原版触发条件。\n测试时必须关闭“敌人诱惑事件禁止”，否则禁止开关优先，诱惑仍不会触发。'
+           when :temptation_disabled
+             '开启后，完全跳过敌人诱惑公共事件；无论是否装备香水、敌人HP多少都不会触发。普通敌方对话仍保留。'
+           when :temptation_immunity
+             '开启后，敌我全员无法获得誘惑状态，并立即解除当前已有的誘惑。\n建议同时开启“敌人诱惑事件禁止”，两者属于不同机制。'
+           when :lose_event_skip
+             '开启后，战败时直接跳过败北事件并进入原版战败后处理。\n作者标记为不可跳过的特殊败北事件仍按原版执行。'
            when :sure_hit_kill
              '开启后，我方攻击必中，并尽量将命中目标直接判定为必杀效果。'
            when :through_mode
              '开启后，玩家可以穿过地图上的普通阻挡。部分特殊事件或区域仍可能限制移动。'
+           when :no_random_encounter
+             '开启后，地图步行不会触发随机遇敌。剧情事件战斗、地图接触事件和“随意开战”不受影响。'
            when :prevent_luca_front
              '开启后，尽量阻止事件把鲁卡强制移动到队伍第一位。'
            when :follow_success
@@ -3251,11 +6692,22 @@ class Window_ResearchModCommand < Window_Command
              '开启后，战斗菜单显示敌人的HP、MP、状态、强化/弱化和图片相关信息。'
            when :battle_party_status
              '开启后，战斗菜单显示我方队员的等级、HP、MP、职业、种族和状态。'
+           when :battle_cutin_view
+             '开启后，战斗菜单增加双方Cut-in查看，可预览我方和敌方配置的技能图片。'
            when :battle_record
              '开启后，记录本场战斗的技能、伤害、恢复和状态文字，可从战斗菜单查看。'
            when :manual_enemy_dialogue
-             '开启后，可以在战斗菜单中手动查看和播放敌人的可用技能台词及特殊战斗对白。'
-           when :persona_dialogue
+             '开启后，可在战斗菜单查看双方技能台词、效果反应，并手动组合释放者与目标对白。'
+           when :battle_editor
+             '开启后，战斗队伍指令增加“战斗修改”，增加如强制赋予或解除敵我成员的誘惑状态等功能'
+           when :audio_overlay
+             '开启后，地图和战斗右上角持续显示当前BGM与BGS文件名；音乐变化时自动刷新。'
+           when :experimental
+             '设置尚处于实验阶段的功能。建议使用独立测试存档。'
+            when :stuck_help
+              '处理两个已知剧情卡关。圣山：开关2479改为OFF即可下山；建议重新关闭原版不遇敌，关闭开关100和2116。' + 10.chr +
+                '新人类宴会：变量1150改为17。执行前建议先保存独立存档。'
+            when :persona_dialogue
              '开启后，魔王城对话中的形态变化会无视原事件条件。建议只在需要调试时开启。'
            when :separator
              '使用上下键移动；分割线不可操作。'
@@ -3296,6 +6748,23 @@ class Window_ResearchModLevelInput < Window_NumberInputBase
 
     @number = 1
     refresh
+  end
+end
+
+class Window_ResearchModEnemyStatMultiplierInput < Window_NumberInputBase
+  def initialize
+    super()
+  end
+
+  def setup
+    start(2, ResearchMod.enemy_stat_multiplier)
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - height) / 2
+    self.z = 500
+  end
+
+  def number
+    [[@number, ResearchMod::ENEMY_STAT_MULTIPLIER_MAX].min, 0].max
   end
 end
 
@@ -3340,6 +6809,24 @@ class Window_ResearchModLoveInput < Window_NumberInputBase
     start(ResearchMod::LOVE_MAX.to_s.size, actor.love)
     self.x = (Graphics.width - width) / 2
     self.y = (Graphics.height - height) / 2
+  end
+
+  def number
+    [[@number, ResearchMod::LOVE_MAX].min, 0].max
+  end
+end
+
+class Window_ResearchModAllLoveInput < Window_NumberInputBase
+  def initialize
+    super()
+    setup
+  end
+
+  def setup
+    start(ResearchMod::LOVE_MAX.to_s.size, 30_000)
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - height) / 2
+    self.z = 500
   end
 
   def number
@@ -3688,13 +7175,15 @@ class Window_ResearchModActorEncyclopediaMode < Window_Command
   end
 
   def visible_line_number
-    4
+    5
   end
 
   def make_command_list
     add_command('备注', :note)
     add_command('固有アビリティ', :ability)
     add_command('Picture路径', :picture_path)
+    add_command('Cut-in图片查看', :cutin_preview,
+                !ResearchMod.actor_cutin_file_names(@actor).empty?)
     add_command('返回', :cancel)
   end
 
@@ -3708,6 +7197,106 @@ class Window_ResearchModActorEncyclopediaMode < Window_Command
 
   def cursor_left(wrap = false)
     Sound.play_cursor if @detail_window.scroll_page(-1)
+  end
+end
+
+class Window_ResearchModActorCutinList < Window_Command
+  attr_reader :entries
+
+  def initialize(actor, help_window, page_index = 0)
+    @actor = actor
+    @entries = ResearchMod.actor_cutin_file_names(actor)
+    @page_max = [(@entries.size + ResearchMod::ACTOR_CUTIN_PAGE_SIZE - 1) /
+                 ResearchMod::ACTOR_CUTIN_PAGE_SIZE, 1].max
+    @page_index = [[page_index, @page_max - 1].min, 0].max
+    @cutin_help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    self.z = 500
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @cutin_help_window.height
+  end
+
+  def make_command_list
+    start_index = @page_index * ResearchMod::ACTOR_CUTIN_PAGE_SIZE
+    page_entries = @entries[start_index, ResearchMod::ACTOR_CUTIN_PAGE_SIZE] || []
+    page_entries.each_with_index do |file_name, index|
+      global_index = start_index + index
+      add_command(format('%4d  %s', global_index + 1, file_name),
+                  :select, true, [global_index, file_name])
+    end
+    add_command(format('上一批（%d/%d）', @page_index + 1, @page_max),
+                :previous, @page_index > 0)
+    add_command(format('下一批（%d/%d）', @page_index + 1, @page_max),
+                :next, @page_index + 1 < @page_max)
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    if current_symbol == :select
+      global_index, file_name = current_ext
+      @cutin_help_window.set_text(
+        format('Cut-in %d/%d\n文件名：%s\n确认：查看图片　取消：返回',
+               global_index + 1, @entries.size, file_name).gsub(92.chr + 'n', 10.chr)
+      )
+    elsif current_symbol == :previous
+      @cutin_help_window.set_text('加载上一批 Cut-in 文件名。')
+    elsif current_symbol == :next
+      @cutin_help_window.set_text('加载下一批 Cut-in 文件名。')
+    else
+      @cutin_help_window.set_text('返回角色图鉴的查看类型菜单。')
+    end
+  end
+end
+
+class ResearchModActorCutinPreview
+  def initialize(file_name, available_height)
+    @background = Sprite.new
+    @background.bitmap = Bitmap.new(Graphics.width, available_height)
+    @background.bitmap.fill_rect(0, 0, Graphics.width, available_height,
+                                 Color.new(0, 0, 0))
+    @background.z = 600
+
+    @picture = Sprite.new
+    @picture.bitmap = Cache.picture(file_name)
+    @picture.z = 610
+    fit_picture(available_height)
+  rescue
+    dispose
+    raise
+  end
+
+  def fit_picture(available_height)
+    bitmap = @picture.bitmap
+    scale_x = Graphics.width.to_f / bitmap.width
+    scale_y = available_height.to_f / bitmap.height
+    scale = [scale_x, scale_y, 1.0].min
+    @picture.zoom_x = scale
+    @picture.zoom_y = scale
+    @picture.x = (Graphics.width - bitmap.width * scale) / 2
+    @picture.y = (available_height - bitmap.height * scale) / 2
+  end
+
+  def dispose
+    if @picture && !@picture.disposed?
+      @picture.bitmap = nil
+      @picture.dispose
+    end
+    if @background && !@background.disposed?
+      bitmap = @background.bitmap
+      @background.bitmap = nil
+      @background.dispose
+      bitmap.dispose if bitmap && !bitmap.disposed?
+    end
+    @picture = nil
+    @background = nil
   end
 end
 
@@ -3750,8 +7339,6 @@ class Window_ResearchModValueMenu < Window_Command
     add_value_command(:large_medal)
     add_value_command(:rabbit_point)
     add_value_command(:shura_bonus)
-    add_command('---------- 队伍设置 ----------', :separator, false)
-    add_value_command(:party_member_max)
     add_command('---------- BF奖励与统计 ----------', :separator, false)
     add_value_command(:bf_win_reward)
     owned = ResearchMod.lewd_soul_count > 0
@@ -4698,6 +8285,132 @@ class Window_ResearchModTeleportSlotAction < Window_Command
   end
 end
 
+class Window_ResearchModStuckHelpMenu < Window_Command
+  def initialize(help_window)
+    @stuck_help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @stuck_help_window.height
+  end
+
+  def make_command_list
+    ResearchMod.stuck_help_entries.each do |entry|
+      if entry[:key] == :sant_mountain
+        label = format('%s：开关状态 %s', entry[:label], entry[:state])
+      else
+        label = format('%s：变量当前值 %d', entry[:label], entry[:state])
+      end
+      add_command(label, :select, true, entry[:key])
+    end
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    entry = ResearchMod.stuck_help_entry(current_ext)
+    if entry
+      if entry[:key] == :sant_mountain
+        state_text = format('%s 当前：%s', entry[:state_label], entry[:state])
+      else
+        state_text = format('%s 当前值：%d', entry[:state_label], entry[:state])
+      end
+      help_window.set_text([state_text, entry[:description],
+                            '确认后会写入目标状态；建议先保存独立存档。'].join(10.chr))
+    else
+      help_window.set_text('返回研究修改器主菜单。')
+    end
+  end
+end
+
+class Window_ResearchModStuckHelpConfirm < Window_Command
+  def initialize(help_window)
+    @stuck_help_window = help_window
+    @entry = nil
+    super(0, 0)
+    self.help_window = help_window
+    hide
+    deactivate
+  end
+
+  def setup(entry)
+    @entry = entry
+    refresh
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - height - @stuck_help_window.height) / 2
+    show
+    activate
+    update_help
+  end
+
+  def make_command_list
+    add_command('确定执行', :execute)
+    add_command('取消', :cancel)
+  end
+
+  def update_help
+    return unless help_window && @entry
+
+    if @entry[:key] == :sant_mountain
+      target = '开关2479改为 OFF；建议关闭原版不遇敌，并关闭开关100和2116'
+    else
+      target = '变量1150改为 17'
+    end
+    help_window.set_text(format('即将处理：%s。%s。确定执行吗？',
+                                @entry[:label], target))
+  end
+end
+class Window_ResearchModExperimentalMenu < Window_Command
+  def initialize(help_window)
+    @experimental_help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @experimental_help_window.height
+  end
+
+  def make_command_list
+    enabled = ResearchMod.experimental_features_enabled? ? '开' : '关'
+    add_command('实验功能总开关：' + enabled, :toggle)
+    add_command('敌方属性倍率：' + ResearchMod.enemy_stat_multiplier_label,
+                :enemy_stat_multiplier)
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    text = case current_symbol
+           when :toggle
+             if ResearchMod.experimental_features_enabled?
+               '实验功能已启用，各子项会按照当前设置生效。关闭后保留子项设置，但全部停止生效。'
+             else
+               '实验功能当前关闭，各子项设置会保留但不会生效。可先设置倍率，再统一开启。'
+             end
+           when :enemy_stat_multiplier
+             '仅在实验功能总开关开启时生效。\n0或1保持原值；2～99倍增敌方最大HP、MP及六项能力。'
+           else
+             '返回研究修改器主菜单。'
+           end
+    help_window.set_text(text.gsub(92.chr + 'n', 10.chr))
+  end
+end
+
 class Window_ResearchModTeleportCoordinateMenu < Window_Command
   def initialize(map_id, event, x, y, help_window)
     @map_id = map_id
@@ -5377,6 +9090,8 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:set_all_love, method(:set_all_love))
     @command_window.set_handler(:recruit_all, method(:recruit_all))
     @command_window.set_handler(:actor_encyclopedia, method(:open_actor_encyclopedia))
+    @command_window.set_handler(:party_member_max, method(:open_party_member_max_editor))
+    @command_window.set_handler(:map_follower_count, method(:open_map_follower_count_editor))
     @command_window.set_handler(:value_editor, method(:open_value_editor))
     @command_window.set_handler(:audio_info, method(:open_audio_info))
     @command_window.set_handler(:author_info, method(:open_author_info))
@@ -5397,14 +9112,24 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:milk_success, method(:toggle_milk_always_success))
     @command_window.set_handler(:drop_success, method(:toggle_drop_always_success))
     @command_window.set_handler(:temptation_ignore_hp, method(:toggle_temptation_ignore_hp))
+    @command_window.set_handler(:temptation_disabled, method(:toggle_temptation_disabled))
+    @command_window.set_handler(:temptation_immunity, method(:toggle_temptation_immunity))
+    @command_window.set_handler(:lose_event_skip, method(:toggle_lose_event_skip))
     @command_window.set_handler(:sure_hit_kill, method(:toggle_sure_hit_kill))
     @command_window.set_handler(:through_mode, method(:toggle_through_mode))
+    @command_window.set_handler(:no_random_encounter, method(:toggle_no_random_encounter))
+    @command_window.set_handler(:original_encounter_disabled, method(:toggle_original_encounter_disabled))
     @command_window.set_handler(:prevent_luca_front, method(:toggle_prevent_event_luca_front))
     @command_window.set_handler(:follow_success, method(:toggle_follow_always_success))
     @command_window.set_handler(:battle_enemy_status, method(:toggle_battle_enemy_status))
     @command_window.set_handler(:battle_party_status, method(:toggle_battle_party_status))
+    @command_window.set_handler(:battle_cutin_view, method(:toggle_battle_cutin_view))
     @command_window.set_handler(:battle_record, method(:toggle_battle_record))
     @command_window.set_handler(:manual_enemy_dialogue, method(:toggle_manual_enemy_dialogue))
+    @command_window.set_handler(:battle_editor, method(:toggle_battle_editor))
+    @command_window.set_handler(:audio_overlay, method(:toggle_audio_overlay))
+    @command_window.set_handler(:experimental, method(:open_experimental_menu))
+    @command_window.set_handler(:stuck_help, method(:open_stuck_help))
     @command_window.set_handler(:persona, method(:select_persona))
     @command_window.set_handler(:backup, method(:backup_actor))
     @command_window.set_handler(:restore, method(:restore_actor))
@@ -5415,9 +9140,11 @@ class Scene_ResearchMod < Scene_MenuBase
   def update
     dispose_research_mod_deferred_windows
     super
+    update_actor_cutin_preview if @actor_cutin_preview
   end
 
   def terminate
+    dispose_actor_cutin_preview
     dispose_research_mod_deferred_windows
     @command_help_window.dispose if @command_help_window && !@command_help_window.disposed?
     @command_help_window = nil
@@ -5607,8 +9334,27 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def set_all_love
-    ResearchMod.set_all_actor_love
+    unless @all_love_window
+      @all_love_window = Window_ResearchModAllLoveInput.new
+      @all_love_window.set_handler(:ok, method(:apply_all_love))
+      @all_love_window.set_handler(:cancel, method(:close_all_love_input))
+    else
+      @all_love_window.setup
+    end
+    @command_help_window.set_text('请输入要设置给所有角色的好感度（0～9999999）。默认值为30000；确认后会影响全局角色数据。')
+    @command_window.deactivate
+  end
+
+  def apply_all_love
+    ResearchMod.set_all_actor_love(@all_love_window.number)
+    close_all_love_input
+  end
+
+  def close_all_love_input
+    @all_love_window.close
+    @all_love_window.deactivate
     @command_window.activate
+    @command_window.update_help
   end
 
   def recruit_all
@@ -5660,6 +9406,7 @@ class Scene_ResearchMod < Scene_MenuBase
     @actor_encyclopedia_mode_window.set_handler(:note, method(:read_actor_encyclopedia_detail))
     @actor_encyclopedia_mode_window.set_handler(:ability, method(:read_actor_encyclopedia_detail))
     @actor_encyclopedia_mode_window.set_handler(:picture_path, method(:read_actor_encyclopedia_detail))
+    @actor_encyclopedia_mode_window.set_handler(:cutin_preview, method(:open_actor_cutin_list))
     @actor_encyclopedia_mode_window.set_handler(:cancel, method(:close_actor_encyclopedia_mode))
   end
 
@@ -5675,20 +9422,143 @@ class Scene_ResearchMod < Scene_MenuBase
     @actor_encyclopedia_mode_window.activate
   end
 
+  def open_actor_cutin_list
+    actor = @actor_encyclopedia_list_window.current_ext
+    @actor_cutin_page = 0
+    @actor_cutin_help_window = Window_Help.new(3)
+    @actor_cutin_help_window.y = Graphics.height - @actor_cutin_help_window.height
+    @actor_cutin_help_window.z = 550
+    create_actor_cutin_list(actor)
+    @actor_encyclopedia_mode_window.deactivate
+  end
+
+  def create_actor_cutin_list(actor)
+    @actor_cutin_list_window = Window_ResearchModActorCutinList.new(
+      actor, @actor_cutin_help_window, @actor_cutin_page
+    )
+    @actor_cutin_list_window.set_handler(:select, method(:open_actor_cutin_preview))
+    @actor_cutin_list_window.set_handler(:previous, method(:load_previous_actor_cutin_page))
+    @actor_cutin_list_window.set_handler(:next, method(:load_next_actor_cutin_page))
+    @actor_cutin_list_window.set_handler(:cancel, method(:close_actor_cutin_list))
+  end
+
+  def recreate_actor_cutin_list
+    actor = @actor_encyclopedia_list_window.current_ext
+    defer_research_mod_window_dispose(@actor_cutin_list_window)
+    create_actor_cutin_list(actor)
+  end
+
+  def load_previous_actor_cutin_page
+    @actor_cutin_page -= 1
+    recreate_actor_cutin_list
+  end
+
+  def load_next_actor_cutin_page
+    @actor_cutin_page += 1
+    recreate_actor_cutin_list
+  end
+
+  def open_actor_cutin_preview(index = nil)
+    if index
+      file_name = @actor_cutin_list_window.entries[index]
+    else
+      index, file_name = @actor_cutin_list_window.current_ext
+    end
+    return unless file_name
+
+    preview = ResearchModActorCutinPreview.new(
+      file_name, Graphics.height - @actor_cutin_help_window.height
+    )
+    dispose_actor_cutin_preview
+    @actor_cutin_preview = preview
+    @actor_cutin_preview_index = index
+    @actor_cutin_list_window.hide
+    @actor_cutin_list_window.deactivate
+    @actor_cutin_help_window.z = 700
+    @actor_cutin_help_window.set_text(
+      format('Cut-in %d/%d\n文件名：%s\n←/→：上一张/下一张　取消：返回列表',
+             index + 1, @actor_cutin_list_window.entries.size,
+             file_name).gsub(92.chr + 'n', 10.chr)
+    )
+    true
+  rescue
+    Sound.play_buzzer
+    @actor_cutin_help_window.set_text(
+      format('图片无法读取：Graphics/Pictures/%s\n可能是文件缺失或资源配置无效。\n取消：返回列表',
+             file_name).gsub(92.chr + 'n', 10.chr)
+    )
+    @actor_cutin_list_window.activate unless @actor_cutin_preview
+    false
+  end
+
+  def update_actor_cutin_preview
+    if Input.trigger?(:B)
+      Sound.play_cancel
+      close_actor_cutin_preview
+    elsif Input.repeat?(:RIGHT) || Input.repeat?(:R)
+      switch_actor_cutin_preview(1)
+    elsif Input.repeat?(:LEFT) || Input.repeat?(:L)
+      switch_actor_cutin_preview(-1)
+    end
+  end
+
+  def switch_actor_cutin_preview(amount)
+    entries = @actor_cutin_list_window.entries
+    return if entries.empty?
+
+    index = (@actor_cutin_preview_index + amount) % entries.size
+    Sound.play_cursor if open_actor_cutin_preview(index)
+  end
+
+  def close_actor_cutin_preview
+    dispose_actor_cutin_preview
+    @actor_cutin_preview_index = nil
+    return unless @actor_cutin_list_window
+
+    @actor_cutin_list_window.show
+    @actor_cutin_list_window.activate
+    @actor_cutin_help_window.z = 550
+    @actor_cutin_list_window.update_help
+  end
+
+  def dispose_actor_cutin_preview
+    @actor_cutin_preview.dispose if @actor_cutin_preview
+    @actor_cutin_preview = nil
+  end
+
+  def close_actor_cutin_list
+    dispose_actor_cutin_preview
+    defer_research_mod_window_dispose(@actor_cutin_list_window)
+    defer_research_mod_window_dispose(@actor_cutin_help_window)
+    @actor_cutin_list_window = nil
+    @actor_cutin_help_window = nil
+    @actor_cutin_preview_index = nil
+    @actor_cutin_page = nil
+    @actor_encyclopedia_mode_window.activate
+    @actor_encyclopedia_mode_window.update_help
+  end
+
   def close_actor_encyclopedia_mode
     @actor_encyclopedia_mode_window.dispose
     @actor_encyclopedia_mode_window = nil
     @actor_encyclopedia_detail_window.set_message(
-      '选择角色并确认后，可查看魔物备注、固有アビリティ或Picture路径。'
+      '选择角色并确认后，可查看备注、固有アビリティ、Picture路径或Cut-in图片。'
     )
     @actor_encyclopedia_list_window.activate
   end
 
   def close_actor_encyclopedia
+    dispose_actor_cutin_preview
+    @actor_cutin_list_window.dispose if @actor_cutin_list_window
+    @actor_cutin_help_window.dispose if @actor_cutin_help_window
     @actor_encyclopedia_mode_window.dispose if @actor_encyclopedia_mode_window
     @actor_encyclopedia_list_window.dispose
     @actor_encyclopedia_detail_window.dispose
     @actor_encyclopedia_mode_window = nil
+    @actor_cutin_list_window = nil
+    @actor_cutin_help_window = nil
+    @actor_cutin_preview_index = nil
+    @actor_cutin_page = nil
     @actor_encyclopedia_list_window = nil
     @actor_encyclopedia_detail_window = nil
     @command_window.activate
@@ -5749,6 +9619,36 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.deactivate
   end
 
+  def open_party_member_max_editor
+    @value_entry = ResearchMod.value_entry(:party_member_max)
+    @standalone_value_input = true
+    @value_help_window = Window_Help.new(3)
+    @value_help_window.y = Graphics.height - @value_help_window.height
+    unless @value_input_window
+      @value_input_window = Window_ResearchModValueInput.new
+      @value_input_window.set_handler(:ok, method(:apply_selected_value))
+      @value_input_window.set_handler(:cancel, method(:close_value_input))
+    end
+    @value_input_window.setup(@value_entry)
+    @command_window.deactivate
+    @value_help_window.set_text(value_input_help_text.gsub(92.chr + 'n', 10.chr))
+  end
+
+  def open_map_follower_count_editor
+    @value_entry = ResearchMod.value_entry(:map_follower_count)
+    @standalone_value_input = true
+    @value_help_window = Window_Help.new(3)
+    @value_help_window.y = Graphics.height - @value_help_window.height
+    unless @value_input_window
+      @value_input_window = Window_ResearchModValueInput.new
+      @value_input_window.set_handler(:ok, method(:apply_selected_value))
+      @value_input_window.set_handler(:cancel, method(:close_value_input))
+    end
+    @value_input_window.setup(@value_entry)
+    @command_window.deactivate
+    @value_help_window.set_text(value_input_help_text.gsub(92.chr + 'n', 10.chr))
+  end
+
   def close_value_editor
     @value_menu_window.dispose
     @value_help_window.dispose
@@ -5775,6 +9675,9 @@ class Scene_ResearchMod < Scene_MenuBase
       variable_value = ResearchMod.value_current(@value_entry) - ResearchMod::PARTY_MEMBER_BASE_MAX
       return format('输入最终队伍编成人数上限，不是变量56的值。\n允许范围：8～99人；当前变量56为%d。\n确认后内部保存为：输入人数 - 8。', variable_value)
     end
+    if @value_entry[:key] == :map_follower_count
+      return '输入地图跟随角色数量，不包含队首玩家。\n允许范围：0～99；0表示只显示玩家。\n高数值会创建大量地图精灵，可能造成卡顿。'
+    end
 
     minimum = ResearchMod.value_minimum(@value_entry)
     maximum = ResearchMod.value_maximum(@value_entry)
@@ -5791,6 +9694,15 @@ class Scene_ResearchMod < Scene_MenuBase
     @value_input_window.close
     @value_input_window.deactivate
     @value_entry = nil
+    if @standalone_value_input
+      @standalone_value_input = false
+      @value_help_window.dispose if @value_help_window && !@value_help_window.disposed?
+      @value_help_window = nil
+      @command_window.refresh
+      @command_window.activate
+      @command_window.update_help
+      return
+    end
     @value_menu_window.refresh
     @value_menu_window.activate
     @value_menu_window.update_help
@@ -7156,6 +11068,24 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.activate
   end
 
+  def toggle_temptation_disabled
+    ResearchMod.toggle_temptation_disabled
+    @command_window.refresh
+    @command_window.activate
+  end
+
+  def toggle_temptation_immunity
+    ResearchMod.toggle_temptation_immunity
+    @command_window.refresh
+    @command_window.activate
+  end
+
+  def toggle_lose_event_skip
+    ResearchMod.toggle_lose_event_skip
+    @command_window.refresh
+    @command_window.activate
+  end
+
   def toggle_sure_hit_kill
     ResearchMod.toggle_sure_hit_kill
     @command_window.refresh
@@ -7166,6 +11096,139 @@ class Scene_ResearchMod < Scene_MenuBase
     ResearchMod.toggle_through_mode
     @command_window.refresh
     @command_window.activate
+  end
+
+  def toggle_no_random_encounter
+    ResearchMod.toggle_no_random_encounter
+    @command_window.refresh
+    @command_window.activate
+  end
+
+  def toggle_original_encounter_disabled
+    ResearchMod.toggle_original_encounter_disabled
+    @command_window.refresh
+    @command_window.activate
+  end
+  def open_stuck_help
+    @stuck_help_window = Window_Help.new(5)
+    @stuck_help_window.y = Graphics.height - @stuck_help_window.height
+    @stuck_help_menu_window = Window_ResearchModStuckHelpMenu.new(@stuck_help_window)
+    @stuck_help_confirm_window = Window_ResearchModStuckHelpConfirm.new(@stuck_help_window)
+    @stuck_help_menu_window.set_handler(:select, method(:confirm_stuck_help))
+    @stuck_help_menu_window.set_handler(:cancel, method(:close_stuck_help))
+    @stuck_help_confirm_window.set_handler(:execute, method(:execute_stuck_help))
+    @stuck_help_confirm_window.set_handler(:cancel, method(:cancel_stuck_help_confirm))
+    @command_window.deactivate
+  end
+
+  def confirm_stuck_help
+    entry = ResearchMod.stuck_help_entry(@stuck_help_menu_window.current_ext)
+    unless entry
+      @stuck_help_menu_window.activate
+      return
+    end
+    @stuck_help_confirm_window.setup(entry)
+    @stuck_help_menu_window.deactivate
+  end
+
+  def execute_stuck_help
+    entry = ResearchMod.stuck_help_entry(@stuck_help_menu_window.current_ext)
+    ResearchMod.apply_stuck_help(entry[:key]) if entry
+    @stuck_help_confirm_window.hide
+    @stuck_help_confirm_window.deactivate
+    @stuck_help_menu_window.refresh
+    @stuck_help_menu_window.activate
+    @stuck_help_menu_window.update_help
+  end
+
+  def cancel_stuck_help_confirm
+    @stuck_help_confirm_window.hide
+    @stuck_help_confirm_window.deactivate
+    @stuck_help_menu_window.activate
+    @stuck_help_menu_window.update_help
+  end
+
+  def close_stuck_help
+    defer_research_mod_window_dispose(@stuck_help_confirm_window)
+    defer_research_mod_window_dispose(@stuck_help_menu_window)
+    defer_research_mod_window_dispose(@stuck_help_window)
+    @stuck_help_confirm_window = nil
+    @stuck_help_menu_window = nil
+    @stuck_help_window = nil
+    @command_window.refresh
+    @command_window.activate
+    @command_window.update_help
+  end
+  def open_experimental_menu
+    @experimental_help_window = Window_Help.new(3)
+    @experimental_help_window.y = Graphics.height - @experimental_help_window.height
+    @experimental_menu_window = Window_ResearchModExperimentalMenu.new(
+      @experimental_help_window
+    )
+    @experimental_menu_window.set_handler(
+      :toggle, method(:toggle_experimental_features)
+    )
+    @experimental_menu_window.set_handler(
+      :enemy_stat_multiplier, method(:open_enemy_stat_multiplier_input)
+    )
+    @experimental_menu_window.set_handler(
+      :cancel, method(:close_experimental_menu)
+    )
+    @command_window.deactivate
+  end
+
+  def toggle_experimental_features
+    ResearchMod.toggle_experimental_features
+    @experimental_menu_window.refresh
+    @experimental_menu_window.activate
+    @experimental_menu_window.update_help
+  end
+
+  def close_experimental_menu
+    defer_research_mod_window_dispose(@experimental_menu_window)
+    defer_research_mod_window_dispose(@experimental_help_window)
+    @experimental_menu_window = nil
+    @experimental_help_window = nil
+    @command_window.refresh
+    @command_window.activate
+    @command_window.update_help
+  end
+
+  def open_enemy_stat_multiplier_input
+    unless @enemy_stat_multiplier_window
+      @enemy_stat_multiplier_window = Window_ResearchModEnemyStatMultiplierInput.new
+      @enemy_stat_multiplier_window.set_handler(
+        :ok, method(:apply_enemy_stat_multiplier)
+      )
+      @enemy_stat_multiplier_window.set_handler(
+        :cancel, method(:close_enemy_stat_multiplier_input)
+      )
+    end
+    @enemy_stat_multiplier_window.setup
+    @experimental_menu_window.deactivate if @experimental_menu_window
+    help_window = @experimental_help_window || @command_help_window
+    help_window.set_text(
+      '输入敌方属性倍率。范围0～99。\n0：不调整　1：原值　2～99：对应倍数'.gsub(92.chr + 'n', 10.chr)
+    )
+  end
+
+  def apply_enemy_stat_multiplier
+    ResearchMod.set_enemy_stat_multiplier(@enemy_stat_multiplier_window.number)
+    @command_window.refresh
+    close_enemy_stat_multiplier_input
+  end
+
+  def close_enemy_stat_multiplier_input
+    @enemy_stat_multiplier_window.close
+    @enemy_stat_multiplier_window.deactivate
+    if @experimental_menu_window
+      @experimental_menu_window.refresh
+      @experimental_menu_window.activate
+      @experimental_menu_window.update_help
+    else
+      @command_window.activate
+      @command_window.update_help
+    end
   end
 
   def toggle_prevent_event_luca_front
@@ -7192,14 +11255,32 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.activate
   end
 
+  def toggle_battle_cutin_view
+    ResearchMod.toggle_battle_cutin_view
+    @command_window.refresh
+    @command_window.activate
+  end
+
   def toggle_battle_record
     ResearchMod.toggle_battle_record
     @command_window.refresh
     @command_window.activate
   end
 
+  def toggle_battle_editor
+    ResearchMod.toggle_battle_editor
+    @command_window.refresh
+    @command_window.activate
+  end
+
   def toggle_manual_enemy_dialogue
     ResearchMod.toggle_manual_enemy_dialogue
+    @command_window.refresh
+    @command_window.activate
+  end
+
+  def toggle_audio_overlay
+    ResearchMod.toggle_audio_overlay
     @command_window.refresh
     @command_window.activate
   end
@@ -7287,12 +11368,27 @@ class Scene_ResearchMod < Scene_MenuBase
 end
 
 class Scene_Map < Scene_Base
+  include ResearchModAudioOverlayScene
   alias research_mod_arbitrary_battle_start start
   alias research_mod_arbitrary_battle_update_scene update_scene
+  alias research_mod_audio_overlay_update update
+  alias research_mod_audio_overlay_terminate terminate
 
   def start
     ResearchMod.cleanup_temporary_troop
+    ResearchMod.apply_map_follower_count
     research_mod_arbitrary_battle_start
+    create_research_mod_audio_overlay
+  end
+
+  def update
+    update_research_mod_audio_overlay
+    research_mod_audio_overlay_update
+  end
+
+  def terminate
+    dispose_research_mod_audio_overlay
+    research_mod_audio_overlay_terminate
   end
 
   def update_scene
@@ -7327,5 +11423,94 @@ class Scene_Menu < Scene_MenuBase
 
   def command_research_mod
     SceneManager.call(Scene_ResearchMod)
+  end
+end
+
+
+class Window_ChoiceList
+  alias research_mod_update_placement_for_custom_talk update_placement
+
+  def update_placement
+    research_mod_update_placement_for_custom_talk
+    return unless $game_message
+    return unless $game_message.instance_variable_get(:@research_mod_choice_right)
+
+    self.x = Graphics.width - width
+    bottom_y = $game_message.instance_variable_get(:@research_mod_choice_bottom_y)
+    self.y = [bottom_y.to_i - height, 0].max if bottom_y
+  end
+end
+
+module Enchant_Item
+  alias research_mod_set_enchants_fast_without_empty_data set_enchants_fast
+
+  def set_enchants_fast
+    begin
+      research_mod_set_enchants_fast_without_empty_data
+    rescue NoMethodError => error
+      unless error.message.include?("undefined method `[]' for nil:NilClass")
+        raise
+      end
+
+      # Skip enchantment generation when no rarity entry matches.
+      @enchants = []
+      begin
+        File.open('research_mod_enchant_debug.log', 'a') do |file|
+          file.puts(format(
+            'empty enchant selection: class=%s base_id=%s rarity=%s',
+            self.class, @base_id, @rarity_num
+          ))
+        end
+      rescue
+      end
+    end
+  end
+
+  alias research_mod_set_data_without_empty_data set_data
+
+  def set_data
+    begin
+      research_mod_set_data_without_empty_data
+    rescue NoMethodError => error
+      unless error.message.include?("undefined method `[]' for nil:NilClass") ||
+             error.message.include?("undefined method `inject' for nil:NilClass")
+        raise
+      end
+
+      @research_mod_incomplete_enchant_data = true
+      @enchants ||= []
+      @features ||= []
+      @params ||= []
+      @plus_num ||= 0
+      begin
+        File.open('research_mod_enchant_debug.log', 'a') do |file|
+          file.puts(format(
+            'skip incomplete enchant data: class=%s base_id=%s rarity=%s error=%s',
+            self.class, @base_id, @rarity_num, error.message
+          ))
+        end
+      rescue
+      end
+    end
+  end
+end
+class RPG::EquipItem
+  alias research_mod_create_enchant_item_without_empty_data create_enchant_item
+
+  def create_enchant_item
+    data = research_mod_create_enchant_item_without_empty_data
+    if data && data.instance_variable_get(:@research_mod_incomplete_enchant_data)
+      return nil
+    end
+    data
+  end
+end
+
+class Game_Party
+  alias research_mod_add_item_data_without_nil add_item_data
+
+  def add_item_data(item, number)
+    return if item.nil?
+    research_mod_add_item_data_without_nil(item, number)
   end
 end
