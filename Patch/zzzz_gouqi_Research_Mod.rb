@@ -31,6 +31,8 @@ module ResearchMod
   LARGE_MEDAL_ITEM_ID = 900
   LEWD_SOUL_ITEM_ID = 628
   LEECH_CELL_ITEM_ID = 282
+  HARPY_FEATHER_ITEM_ID = 23
+  GUIDING_THREAD_COMMON_EVENT_ID = 31
 
   STUCK_SANT_MOUNTAIN_SWITCH_ID = 2479
   STUCK_SANT_MOUNTAIN_WARP_SWITCH_ID = 100
@@ -370,6 +372,24 @@ module ResearchMod
 
   def self.actor_encyclopedia_entries
     $data_actors.compact.select { |actor| !actor.name.empty? }.sort_by(&:id)
+  end
+
+  def self.actor_encyclopedia_page(start_id)
+    maximum_id = [$data_actors.size - 1, 1].max
+    normalized_start_id = [[start_id, maximum_id].min, 1].max
+    entries = actor_encyclopedia_entries
+    available = entries.select { |actor| actor.id >= normalized_start_id }
+    previous = entries.select { |actor| actor.id < normalized_start_id }
+    page_entries = available.first(ACTOR_ENCYCLOPEDIA_PAGE_SIZE)
+    previous_entries = previous.last(ACTOR_ENCYCLOPEDIA_PAGE_SIZE)
+    {
+      :start_id => normalized_start_id,
+      :entries => page_entries,
+      :previous_start_id => previous_entries.empty? ? nil : previous_entries.first.id,
+      :next_start_id => available[ACTOR_ENCYCLOPEDIA_PAGE_SIZE] ?
+        available[ACTOR_ENCYCLOPEDIA_PAGE_SIZE].id : nil,
+      :maximum_id => maximum_id
+    }
   end
 
   def self.actor_fixed_ability(actor)
@@ -907,12 +927,15 @@ end
     maximum_id = [$data_enemies.size - 1, 1].max
     normalized_start_id = [[start_id, maximum_id].min, 1].max
     available = lose_event_enemies.select { |enemy| enemy.id >= normalized_start_id }
+    previous = lose_event_enemies.select { |enemy| enemy.id < normalized_start_id }
     entries = available.first(LOSE_EVENT_PAGE_SIZE)
+    previous_entries = previous.last(LOSE_EVENT_PAGE_SIZE)
     next_start_id = available[LOSE_EVENT_PAGE_SIZE]
 
     {
       :start_id => normalized_start_id,
       :entries => entries,
+      :previous_start_id => previous_entries.empty? ? nil : previous_entries.first.id,
       :next_start_id => next_start_id ? next_start_id.id : nil,
       :maximum_id => maximum_id
     }
@@ -1063,12 +1086,16 @@ end
   def self.map_page(start_id)
     maximum_id = map_maximum_id
     normalized_start_id = [[start_id, maximum_id].min, 1].max
-    ids = map_infos.keys.select { |id| id >= normalized_start_id }.sort
+    all_ids = map_infos.keys.sort
+    ids = all_ids.select { |id| id >= normalized_start_id }
+    previous_ids = all_ids.select { |id| id < normalized_start_id }
     entries = ids.first(MAP_PAGE_SIZE)
     next_id = ids[MAP_PAGE_SIZE]
+    previous_start_id = previous_ids.last(MAP_PAGE_SIZE).first
     {
       :start_id => normalized_start_id,
       :entries => entries,
+      :previous_start_id => previous_start_id,
       :next_start_id => next_id,
       :maximum_id => maximum_id
     }
@@ -3787,8 +3814,12 @@ class Game_Interpreter
   def research_mod_choose_candidate_dialogue(entries, ring_entries = [])
     default_entry = entries.find { |entry| !entry[:actor_id] }
     actor_entries = entries.select { |entry| entry[:actor_id] }
-    choices = ['未送戒指（默认对话）', '已送戒指（戒指专属对话）']
-    actions = [[:default, default_entry], [:ring, ring_entries]]
+    choices = ['未送戒指（默认对话）']
+    actions = [[:default, default_entry]]
+    unless ring_entries.empty?
+      choices << '已送戒指（戒指专属对话）'
+      actions << [:ring, ring_entries]
+    end
     actor_entries.each do |entry|
       choices << format('%4d  %s', entry[:actor_id], entry[:name])
       actions << [:actor, entry]
@@ -4581,6 +4612,8 @@ class Window_ResearchModBattleEnemyDialogueList < Window_Command
     page_size = dialogue_page_size
     start_index = @page_index * page_size
     page_entries = @entries[start_index, page_size] || []
+    add_command(format('上一批（%d/%d）', @page_index + 1, @page_max),
+                :previous, @page_index > 0)
     page_entries.each do |entry|
       candidate_index = dialogue_candidate_index(entry)
       if ResearchMod.mtool_active?
@@ -4614,8 +4647,6 @@ class Window_ResearchModBattleEnemyDialogueList < Window_Command
       end
       add_command(label, :select, true, entry)
     end
-    add_command(format('上一批（%d/%d）', @page_index + 1, @page_max),
-                :previous, @page_index > 0)
     add_command(format('下一批（%d/%d）', @page_index + 1, @page_max),
                 :next, @page_index + 1 < @page_max)
     add_command(@cancel_text, :cancel)
@@ -4918,13 +4949,13 @@ class Window_ResearchModBattleCutinList < Window_Command
   def make_command_list
     start_index = @page_index * ResearchMod::ACTOR_CUTIN_PAGE_SIZE
     page_entries = @entries[start_index, ResearchMod::ACTOR_CUTIN_PAGE_SIZE] || []
+    add_command(format('上一批（%d/%d）', @page_index + 1, @page_max),
+                :previous, @page_index > 0)
     page_entries.each_with_index do |file_name, index|
       global_index = start_index + index
       add_command(format('%4d  %s', global_index + 1, file_name),
                   :select, true, [global_index, file_name])
     end
-    add_command(format('上一批（%d/%d）', @page_index + 1, @page_max),
-                :previous, @page_index > 0)
     add_command(format('下一批（%d/%d）', @page_index + 1, @page_max),
                 :next, @page_index + 1 < @page_max)
     add_command('返回', :cancel)
@@ -6932,10 +6963,11 @@ class Window_ResearchModCommand < Window_Command
     add_command('当前音乐信息', :audio_info)
     add_command('当前音乐悬浮窗：' + (ResearchMod.audio_overlay_enabled? ? '已开启' : '已关闭'), :audio_overlay)
     add_command('---------- 地图 ----------', :separator, false)
+    add_command('ハーピーの羽', :harpy_feather, WarpManager.usable?)
+    add_command('導きの糸', :guiding_thread)
     add_command('任意地图传送', :teleport)
     add_command('传送坐标记录', :teleport_slots)
     add_command('地图与事件检查', :map_inspector)
-    add_command('开关与变量修改', :debug_database)
     add_command('---------- 战斗 ----------', :separator, false)
     add_command('自定义战斗', :custom_battle)
     add_command('战败事件查看', :lose_event)
@@ -6960,6 +6992,7 @@ class Window_ResearchModCommand < Window_Command
     add_command('不遇敌：' + (ResearchMod.no_random_encounter? ? '已开启' : '已关闭'), :no_random_encounter)
     add_command('原版禁止遇敌：' + (ResearchMod.original_encounter_disabled? ? '已开启' : '已关闭'), :original_encounter_disabled)
     add_command('防止鲁卡强制置顶：' + (ResearchMod.prevent_event_luca_front? ? '已开启' : '已关闭'), :prevent_luca_front)
+    add_command('开关与变量修改', :debug_database)
     add_command('---------- 实验功能 ----------', :separator, false)
     add_command('实验功能', :experimental)
     add_command('---------- 问题 ----------', :separator, false)
@@ -6982,6 +7015,12 @@ class Window_ResearchModCommand < Window_Command
              '设置地图上队首玩家之后的跟随角色数量。0表示不显示跟随者，最多99；数量过高可能明显降低地图性能。'
            when :party_edit_actor_id
              ResearchMod::PARTY_EDIT_ACTOR_ID_HELP_TEXT
+           when :actor_encyclopedia
+             '输入角色起始ID后，每批加载最多100名有名称角色；支持上一批、下一批和重新输入起始ID。'
+           when :guiding_thread
+             '执行物品「導きの糸」的原版效果，从当前迷宫返回地上；不会要求持有，也不会消耗物品。'
+           when :harpy_feather
+             '打开物品「ハーピーの羽」的原版传送地点选择；遵守原版地点解锁和传送禁止条件，但不会消耗物品。'
            when :reflection_meeting
              ResearchMod::REFLECTION_MEETING_HELP_TEXT
            when :candidate_dialogue
@@ -7027,6 +7066,9 @@ class Window_ResearchModCommand < Window_Command
              '开启后，战斗队伍指令增加“战斗修改”，增加如强制赋予或解除敵我成员的誘惑状态等功能'
            when :audio_overlay
              '开启后，地图和战斗右上角持续显示当前BGM与BGS文件名；音乐变化时自动刷新。'
+           when :value_editor
+             '可修改金钱、奖牌、各类点数、BF奖励进度、BF图鉴统计和累计奖牌兑换数。' + 10.chr +
+               '部分统计可能影响图鉴、成就或剧情，修改前建议备份存档。'
            when :experimental
              '设置尚处于实验阶段的功能。建议使用独立测试存档。'
             when :stuck_help
@@ -7431,16 +7473,41 @@ class Window_ResearchModActorEncyclopediaDetail < Window_Selectable
   end
 end
 
-class Window_ResearchModActorEncyclopediaList < Window_Command
-  attr_reader :page_index, :page_max
+class Window_ResearchModActorEncyclopediaIdInput < Window_NumberInputBase
+  attr_reader :maximum
 
-  def initialize(page_index, detail_window)
-    @entries = ResearchMod.actor_encyclopedia_entries
-    @page_max = [(@entries.size + ResearchMod::ACTOR_ENCYCLOPEDIA_PAGE_SIZE - 1) /
-                 ResearchMod::ACTOR_ENCYCLOPEDIA_PAGE_SIZE, 1].max
-    @page_index = [[page_index, @page_max - 1].min, 0].max
-    @page_entries = @entries.slice(@page_index * ResearchMod::ACTOR_ENCYCLOPEDIA_PAGE_SIZE,
-                                  ResearchMod::ACTOR_ENCYCLOPEDIA_PAGE_SIZE) || []
+  def initialize
+    super()
+  end
+
+  def setup(initial_id)
+    entries = ResearchMod.actor_encyclopedia_entries
+    @maximum = [entries.empty? ? 1 : entries.last.id, 1].max
+    start(@maximum.to_s.size, [[initial_id, @maximum].min, 1].max)
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - height) / 2
+    self.z = 500
+  end
+
+  def number
+    [[@number, @maximum].min, 1].max
+  end
+
+  def process_digit_change
+    super
+    return unless @number < 1
+
+    @number = 1
+    refresh
+  end
+end
+
+class Window_ResearchModActorEncyclopediaList < Window_Command
+  attr_reader :page
+
+  def initialize(start_id, history, detail_window)
+    @history = history
+    @page = ResearchMod.actor_encyclopedia_page(start_id)
     @detail_window = detail_window
     super(0, 0)
     self.help_window = @detail_window
@@ -7455,25 +7522,41 @@ class Window_ResearchModActorEncyclopediaList < Window_Command
     Graphics.height
   end
 
+  def cursor_up(wrap = false)
+    return select(item_max - 1) if index == 0
+
+    super
+  end
+
   def make_command_list
-    @page_entries.each do |actor|
+    add_command('重新输入起始ID', :reinput)
+    add_command(format('加载上一批%d名角色', ResearchMod::ACTOR_ENCYCLOPEDIA_PAGE_SIZE),
+                :previous, !@history.empty? || !@page[:previous_start_id].nil?)
+    @page[:entries].each do |actor|
       add_command(format('%4d  %s', actor.id, actor.name), :select, true, actor)
     end
-    add_command(format('上一批角色（%d/%d）', @page_index + 1, @page_max),
-                :previous, @page_index > 0)
-    add_command(format('下一批角色（%d/%d）', @page_index + 1, @page_max),
-                :next, @page_index + 1 < @page_max)
+    add_command(format('加载下一批%d名角色', ResearchMod::ACTOR_ENCYCLOPEDIA_PAGE_SIZE),
+                :next, !@page[:next_start_id].nil?)
+    add_command('重新输入起始ID', :reinput)
     add_command('返回', :cancel)
   end
 
   def update_help
-    @detail_window.set_message(command_help_text)
+    actor = current_ext
+    if actor && current_symbol == :select
+      text = format('角色ID %d　%s\n确认后选择查看备注、固有アビリティ、Picture路径或Cut-in图片。',
+                    actor.id, actor.name)
+      @detail_window.set_message(text.gsub(92.chr + 'n', 10.chr))
+    else
+      @detail_window.set_message(command_help_text)
+    end
   end
 
   def command_help_text
     case current_symbol
-    when :previous then '返回上一批角色。'
-    when :next then '加载下一批角色。'
+    when :reinput then '重新输入角色数据库起始ID。'
+    when :previous then '返回上一批有效角色。'
+    when :next then '从本批末尾继续加载下一批有效角色。'
     when :cancel then '返回研究修改器。'
     else '选择角色并确认后，可查看详情。'
     end
@@ -7556,13 +7639,13 @@ class Window_ResearchModActorCutinList < Window_Command
   def make_command_list
     start_index = @page_index * ResearchMod::ACTOR_CUTIN_PAGE_SIZE
     page_entries = @entries[start_index, ResearchMod::ACTOR_CUTIN_PAGE_SIZE] || []
+    add_command(format('上一批（%d/%d）', @page_index + 1, @page_max),
+                :previous, @page_index > 0)
     page_entries.each_with_index do |file_name, index|
       global_index = start_index + index
       add_command(format('%4d  %s', global_index + 1, file_name),
                   :select, true, [global_index, file_name])
     end
-    add_command(format('上一批（%d/%d）', @page_index + 1, @page_max),
-                :previous, @page_index > 0)
     add_command(format('下一批（%d/%d）', @page_index + 1, @page_max),
                 :next, @page_index + 1 < @page_max)
     add_command('返回', :cancel)
@@ -7700,8 +7783,7 @@ class Window_ResearchModValueMenu < Window_Command
     when :cancel
       '返回研究修改器。'
     else
-      '可修改：金钱、奖牌、各类点数、BF奖励进度、BF图鉴统计和累计奖牌兑换数。' + 10.chr +
-        '确定后输入目标值；部分统计可能影响图鉴、成就或剧情，修改前建议备份存档。'
+      '请选择要修改的数值。'
     end
   end
 
@@ -7837,13 +7919,13 @@ class Window_ResearchModDatabaseList < Window_Command
 
   def make_command_list
     add_command('重新输入初始ID', :reinput)
+    add_command(format('加载上一批%d个', ResearchMod::DATABASE_PAGE_SIZE),
+                :previous, !@history.empty?)
     @page[:entries].each do |item|
       suffix = ResearchMod.database_item_special?(item) ? '（特殊模板／不可直接获取）' : ''
       enabled = ResearchMod.database_item_capacity(item) > 0
       add_command(format('%4d  %s%s', item.id, item.name, suffix), :select, enabled, item)
     end
-    add_command(format('加载上一批%d个', ResearchMod::DATABASE_PAGE_SIZE),
-                :previous, !@history.empty?)
     add_command(format('加载下一批%d个', ResearchMod::DATABASE_PAGE_SIZE),
                 :next, !@page[:next_start_id].nil?)
     add_command('重新输入初始ID', :reinput)
@@ -7988,13 +8070,13 @@ class Window_ResearchModBattleList < Window_Command
 
   def make_command_list
     add_command('重新输入起始ID', :reinput)
+    add_command(format('加载上一批%d项', ResearchMod::BATTLE_PAGE_SIZE),
+                :previous,
+                !@history.empty? || !@page[:previous_start_id].nil?)
     @page[:entries].each do |entry|
       name = @kind == :enemy ? entry.name : ResearchMod.troop_display_name(entry)
       add_command(format('%4d  %s', entry.id, name), :select, true, entry)
     end
-    add_command(format('加载上一批%d项', ResearchMod::BATTLE_PAGE_SIZE),
-                :previous,
-                !@history.empty? || !@page[:previous_start_id].nil?)
     add_command(format('加载下一批%d项', ResearchMod::BATTLE_PAGE_SIZE),
                 :next, !@page[:next_start_id].nil?)
     add_command('重新输入起始ID', :reinput)
@@ -8104,12 +8186,12 @@ class Window_ResearchModLoseEventList < Window_Command
 
   def make_command_list
     add_command('重新输入起始ID', :reinput)
+    add_command(format('加载上一批%d项', ResearchMod::LOSE_EVENT_PAGE_SIZE),
+                :previous, !@history.empty? || !@page[:previous_start_id].nil?)
     @page[:entries].each do |enemy|
       add_command(format('%4d  E%4d  %s', enemy.id, enemy.lose_event_id, enemy.name),
                   :select, true, enemy)
     end
-    add_command(format('加载上一批%d项', ResearchMod::LOSE_EVENT_PAGE_SIZE),
-                :previous, !@history.empty?)
     add_command(format('加载下一批%d项', ResearchMod::LOSE_EVENT_PAGE_SIZE),
                 :next, !@page[:next_start_id].nil?)
     add_command('重新输入起始ID', :reinput)
@@ -8266,13 +8348,13 @@ class Window_ResearchModDebugList < Window_Command
 
   def make_command_list
     add_command('重新输入起始ID', :reinput)
+    add_command(format('加载上一批%d项', ResearchMod::DEBUG_DATABASE_PAGE_SIZE),
+                :previous, !@history.empty?)
     @page[:entries].each do |entry_id|
       name = ResearchMod.debug_entry_name(@kind, entry_id)[0, 42]
       value = ResearchMod.debug_entry_value_text(@kind, entry_id).to_s[0, 30]
       add_command(format('%4d  %s：%s', entry_id, name, value), :select, true, entry_id)
     end
-    add_command(format('加载上一批%d项', ResearchMod::DEBUG_DATABASE_PAGE_SIZE),
-                :previous, !@history.empty?)
     add_command(format('加载下一批%d项', ResearchMod::DEBUG_DATABASE_PAGE_SIZE),
                 :next, !@page[:next_start_id].nil?)
     add_command('重新输入起始ID', :reinput)
@@ -8509,7 +8591,7 @@ class Window_ResearchModTeleportEventList < Window_Command
   end
 
   def make_command_list
-    add_command('重新输入地图ID', :reinput)
+    add_command('重新选择地图（输入起始ID）', :reinput)
     @events.each do |event|
       add_command(format('%4d  %s　X=%d Y=%d', event.id,
                          ResearchMod.event_display_name(event), event.x, event.y),
@@ -8523,12 +8605,12 @@ class Window_ResearchModTeleportEventList < Window_Command
 
     if current_symbol == :select
       event = current_ext
-      text = format('地图 %04d「%s」\n事件 %04d「%s」　原始坐标 X=%d Y=%d\n%s\n确认后编辑传送坐标。',
+      text = format('地图 %04d「%s」\n事件 %04d「%s」　原始坐标 X=%d Y=%d\n%s\n坐标是事件在地图上的原始位置，默认传送到这里；卡住请选其他事件或开启“穿墙模式”。',
                     @map_id, ResearchMod.map_name(@map_id), event.id,
                     ResearchMod.event_display_name(event), event.x, event.y,
                     ResearchMod.event_graphic_text(@map_id, event))
     elsif current_symbol == :reinput
-      text = '重新输入目标地图 ID。'
+      text = '重新输入地图起始 ID。'
     else
       text = format('地图 %04d「%s」共有 %d 个事件。返回任意地图传送。',
                     @map_id, ResearchMod.map_name(@map_id), @events.size)
@@ -8870,8 +8952,10 @@ end
 class Window_ResearchModMapList < Window_Command
   attr_reader :page
 
-  def initialize(start_id, history, help_window)
+  def initialize(start_id, history, help_window, purpose = :inspector)
     @history = history
+    @purpose = purpose
+    @help_height = help_window.height
     @page = ResearchMod.map_page(start_id)
     super(0, 0)
     self.help_window = help_window
@@ -8883,7 +8967,7 @@ class Window_ResearchModMapList < Window_Command
   end
 
   def window_height
-    Graphics.height - fitting_height(3)
+    Graphics.height - @help_height
   end
 
   def cursor_up(wrap = false)
@@ -8894,11 +8978,11 @@ class Window_ResearchModMapList < Window_Command
 
   def make_command_list
     add_command('重新输入起始ID', :reinput)
+    add_command(format('加载上一批%d张地图', ResearchMod::MAP_PAGE_SIZE),
+                :previous, !@history.empty? || !@page[:previous_start_id].nil?)
     @page[:entries].each do |map_id|
       add_command(format('%4d  %s', map_id, ResearchMod.map_name(map_id)), :select, true, map_id)
     end
-    add_command(format('加载上一批%d张地图', ResearchMod::MAP_PAGE_SIZE),
-                :previous, !@history.empty?)
     add_command(format('加载下一批%d张地图', ResearchMod::MAP_PAGE_SIZE),
                 :next, !@page[:next_start_id].nil?)
     add_command('重新输入起始ID', :reinput)
@@ -8919,7 +9003,8 @@ class Window_ResearchModMapList < Window_Command
              when :reinput then '重新输入地图数据库起始ID。'
              when :previous then '返回上一批地图。'
              when :next then '从本批末尾继续加载下一批地图。'
-             else '返回地图检查入口。'
+             else
+               @purpose == :teleport ? '返回任意地图传送入口。' : '返回地图检查入口。'
              end
       help_window.set_text(text)
     end
@@ -9445,6 +9530,8 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:audio_info, method(:open_audio_info))
     @command_window.set_handler(:author_info, method(:open_author_info))
     @command_window.set_handler(:custom_battle, method(:open_custom_battle))
+    @command_window.set_handler(:guiding_thread, method(:use_guiding_thread_without_cost))
+    @command_window.set_handler(:harpy_feather, method(:use_harpy_feather_without_cost))
     @command_window.set_handler(:teleport, method(:open_teleport_browser))
     @command_window.set_handler(:teleport_slots, method(:open_teleport_slots))
     @command_window.set_handler(:lose_event, method(:open_lose_event_browser))
@@ -9737,38 +9824,98 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def open_actor_encyclopedia
-    @actor_encyclopedia_page = 0
+    @actor_encyclopedia_start_id ||= 1
+    @actor_encyclopedia_history = []
+    @actor_encyclopedia_input_return = false
     width = Graphics.width - ResearchMod::ACTOR_ENCYCLOPEDIA_LIST_WIDTH
     @actor_encyclopedia_detail_window = Window_ResearchModActorEncyclopediaDetail.new(
       ResearchMod::ACTOR_ENCYCLOPEDIA_LIST_WIDTH, 0, width, Graphics.height
     )
     @actor_encyclopedia_detail_window.set_handler(:cancel, method(:close_actor_encyclopedia_detail))
-    create_actor_encyclopedia_list
     @command_window.deactivate
+    open_actor_encyclopedia_id_input
   end
 
-  def create_actor_encyclopedia_list
+  def open_actor_encyclopedia_id_input
+    unless @actor_encyclopedia_input_window
+      @actor_encyclopedia_input_window = Window_ResearchModActorEncyclopediaIdInput.new
+      @actor_encyclopedia_input_window.set_handler(:ok, method(:apply_actor_encyclopedia_start_id))
+      @actor_encyclopedia_input_window.set_handler(:cancel, method(:close_actor_encyclopedia_id_input))
+    end
+    @actor_encyclopedia_input_window.setup(@actor_encyclopedia_start_id)
+    cancel_text = @actor_encyclopedia_input_return ? '返回角色列表。' : '返回研究修改器。'
+    text = format('请输入角色图鉴起始ID（1～%d）\n确认：加载最多%d名有名称角色。\n取消：%s',
+                  @actor_encyclopedia_input_window.maximum,
+                  ResearchMod::ACTOR_ENCYCLOPEDIA_PAGE_SIZE, cancel_text)
+    @actor_encyclopedia_detail_window.set_message(text.gsub(92.chr + 'n', 10.chr))
+  end
+
+  def close_actor_encyclopedia_id_input
+    defer_research_mod_window_dispose(@actor_encyclopedia_input_window)
+    @actor_encyclopedia_input_window = nil
+    if @actor_encyclopedia_input_return && @actor_encyclopedia_list_window
+      @actor_encyclopedia_list_window.show
+      @actor_encyclopedia_list_window.activate
+      @actor_encyclopedia_list_window.update_help
+      @actor_encyclopedia_input_return = false
+    else
+      close_actor_encyclopedia
+    end
+  end
+
+  def apply_actor_encyclopedia_start_id
+    @actor_encyclopedia_start_id = @actor_encyclopedia_input_window.number
+    @actor_encyclopedia_history = []
+    @actor_encyclopedia_input_return = false
+    defer_research_mod_window_dispose(@actor_encyclopedia_input_window)
+    @actor_encyclopedia_input_window = nil
+    dispose_actor_encyclopedia_list
+    create_actor_encyclopedia_list(@actor_encyclopedia_start_id)
+  end
+
+  def create_actor_encyclopedia_list(start_id)
     @actor_encyclopedia_list_window = Window_ResearchModActorEncyclopediaList.new(
-      @actor_encyclopedia_page, @actor_encyclopedia_detail_window
+      start_id, @actor_encyclopedia_history, @actor_encyclopedia_detail_window
     )
     @actor_encyclopedia_list_window.set_handler(:select, method(:select_actor_encyclopedia_entry))
+    @actor_encyclopedia_list_window.set_handler(:reinput, method(:reinput_actor_encyclopedia_start_id))
     @actor_encyclopedia_list_window.set_handler(:previous, method(:load_previous_actor_encyclopedia_page))
     @actor_encyclopedia_list_window.set_handler(:next, method(:load_next_actor_encyclopedia_page))
     @actor_encyclopedia_list_window.set_handler(:cancel, method(:close_actor_encyclopedia))
   end
 
+  def dispose_actor_encyclopedia_list
+    defer_research_mod_window_dispose(@actor_encyclopedia_list_window)
+    @actor_encyclopedia_list_window = nil
+  end
+
   def recreate_actor_encyclopedia_list
-    @actor_encyclopedia_list_window.dispose
-    create_actor_encyclopedia_list
+    dispose_actor_encyclopedia_list
+    create_actor_encyclopedia_list(@actor_encyclopedia_start_id)
+  end
+
+  def reinput_actor_encyclopedia_start_id
+    @actor_encyclopedia_list_window.hide
+    @actor_encyclopedia_list_window.deactivate
+    @actor_encyclopedia_input_return = true
+    open_actor_encyclopedia_id_input
   end
 
   def load_previous_actor_encyclopedia_page
-    @actor_encyclopedia_page -= 1
+    previous_start_id = @actor_encyclopedia_history.pop
+    previous_start_id ||= @actor_encyclopedia_list_window.page[:previous_start_id]
+    return @actor_encyclopedia_list_window.activate unless previous_start_id
+
+    @actor_encyclopedia_start_id = previous_start_id
     recreate_actor_encyclopedia_list
   end
 
   def load_next_actor_encyclopedia_page
-    @actor_encyclopedia_page += 1
+    next_start_id = @actor_encyclopedia_list_window.page[:next_start_id]
+    return @actor_encyclopedia_list_window.activate unless next_start_id
+
+    @actor_encyclopedia_history.push(@actor_encyclopedia_list_window.page[:start_id])
+    @actor_encyclopedia_start_id = next_start_id
     recreate_actor_encyclopedia_list
   end
 
@@ -9923,16 +10070,20 @@ class Scene_ResearchMod < Scene_MenuBase
 
   def close_actor_encyclopedia
     dispose_actor_cutin_preview
-    @actor_cutin_list_window.dispose if @actor_cutin_list_window
-    @actor_cutin_help_window.dispose if @actor_cutin_help_window
-    @actor_encyclopedia_mode_window.dispose if @actor_encyclopedia_mode_window
-    @actor_encyclopedia_list_window.dispose
-    @actor_encyclopedia_detail_window.dispose
+    defer_research_mod_window_dispose(@actor_cutin_list_window)
+    defer_research_mod_window_dispose(@actor_cutin_help_window)
+    defer_research_mod_window_dispose(@actor_encyclopedia_mode_window)
+    defer_research_mod_window_dispose(@actor_encyclopedia_input_window)
+    defer_research_mod_window_dispose(@actor_encyclopedia_list_window)
+    defer_research_mod_window_dispose(@actor_encyclopedia_detail_window)
     @actor_encyclopedia_mode_window = nil
     @actor_cutin_list_window = nil
     @actor_cutin_help_window = nil
     @actor_cutin_preview_index = nil
     @actor_cutin_page = nil
+    @actor_encyclopedia_input_window = nil
+    @actor_encyclopedia_input_return = false
+    @actor_encyclopedia_history = nil
     @actor_encyclopedia_list_window = nil
     @actor_encyclopedia_detail_window = nil
     @command_window.activate
@@ -10426,6 +10577,7 @@ class Scene_ResearchMod < Scene_MenuBase
 
   def load_previous_map_page
     previous_start_id = @map_history.pop
+    previous_start_id ||= @map_list_window.page[:previous_start_id]
     return @map_list_window.activate unless previous_start_id
 
     @map_start_id = previous_start_id
@@ -10557,6 +10709,34 @@ class Scene_ResearchMod < Scene_MenuBase
     @map_page_window.update_help
   end
 
+  def use_guiding_thread_without_cost
+    common_event_id = ResearchMod::GUIDING_THREAD_COMMON_EVENT_ID
+    unless $data_common_events[common_event_id]
+      Sound.play_buzzer
+      @command_window.activate
+      @command_help_window.set_text('无法读取「導きの糸」使用的原版公共事件。')
+      return
+    end
+
+    $game_temp.reserve_common_event(common_event_id)
+    SceneManager.goto(Scene_Map)
+  end
+
+  def use_harpy_feather_without_cost
+    item = $data_items[ResearchMod::HARPY_FEATHER_ITEM_ID]
+    unless item && defined?(Scene_Warp) && WarpManager.usable?
+      Sound.play_buzzer
+      @command_window.activate
+      @command_help_window.set_text('当前无法使用「ハーピーの羽」：可能尚未解锁传送地点，或原版传送被禁止。')
+      return
+    end
+
+    free_item = item.clone
+    free_item.consumable = false
+    SceneManager.goto(Scene_Warp)
+    SceneManager.scene.prepare(free_item)
+  end
+
   def open_teleport_slots
     @teleport_slot_help_window = Window_Help.new(3)
     @teleport_slot_help_window.y = Graphics.height - @teleport_slot_help_window.height
@@ -10630,7 +10810,8 @@ class Scene_ResearchMod < Scene_MenuBase
     @teleport_help_window = Window_Help.new(4)
     @teleport_help_window.y = Graphics.height - @teleport_help_window.height
     @teleport_map_id ||= $game_map.map_id
-    @teleport_return_to_event_list = false
+    @teleport_map_history = []
+    @teleport_map_input_return = nil
     @command_window.deactivate
     open_teleport_map_id_input
   end
@@ -10642,23 +10823,31 @@ class Scene_ResearchMod < Scene_MenuBase
       @teleport_map_id_window.set_handler(:cancel, method(:close_teleport_map_id_input))
     end
     @teleport_map_id_window.setup(@teleport_map_id)
-    text = format('请输入目标地图ID（1～%d）\n确认后加载该地图全部事件。\n选择事件后可以编辑 X/Y 坐标。\n取消：%s',
-                  ResearchMod.map_maximum_id,
-                  @teleport_return_to_event_list ? '返回事件列表。' : '返回研究修改器。')
+    cancel_text = case @teleport_map_input_return
+                  when :event then '返回事件列表。'
+                  when :map then '返回地图列表。'
+                  else '返回研究修改器。'
+                  end
+    text = format('请输入地图起始ID（1～%d）\n确认：加载最多%d张地图并选择目标地图。\n选择地图后再选择事件和传送坐标。\n取消：%s',
+                  ResearchMod.map_maximum_id, ResearchMod::MAP_PAGE_SIZE, cancel_text)
     @teleport_help_window.set_text(text.gsub(92.chr + 'n', 10.chr))
   end
 
   def close_teleport_map_id_input
-    @teleport_map_id_window.close
-    @teleport_map_id_window.deactivate
-    if @teleport_return_to_event_list && @teleport_event_window
+    defer_research_mod_window_dispose(@teleport_map_id_window)
+    @teleport_map_id_window = nil
+    if @teleport_map_input_return == :event && @teleport_event_window
       @teleport_event_window.show
       @teleport_event_window.activate
       @teleport_event_window.update_help
-      @teleport_return_to_event_list = false
+    elsif @teleport_map_input_return == :map && @teleport_map_list_window
+      @teleport_map_list_window.show
+      @teleport_map_list_window.activate
+      @teleport_map_list_window.update_help
     else
       close_teleport_browser
     end
+    @teleport_map_input_return = nil
   end
 
   def apply_teleport_map_id
@@ -10672,10 +10861,75 @@ class Scene_ResearchMod < Scene_MenuBase
     end
 
     @teleport_map_id = map_id
-    @teleport_return_to_event_list = false
-    @teleport_map_id_window.close
-    @teleport_map_id_window.deactivate
+    @teleport_map_history = []
+    @teleport_map_input_return = nil
+    defer_research_mod_window_dispose(@teleport_map_id_window)
+    @teleport_map_id_window = nil
+    dispose_teleport_map_list
     dispose_teleport_event_list
+    open_teleport_map_list(@teleport_map_id)
+  end
+
+  def open_teleport_map_list(start_id)
+    @teleport_map_list_window = Window_ResearchModMapList.new(
+      start_id, @teleport_map_history, @teleport_help_window, :teleport
+    )
+    @teleport_map_list_window.set_handler(:select, method(:select_teleport_map))
+    @teleport_map_list_window.set_handler(:reinput, method(:reinput_teleport_map_start_id))
+    @teleport_map_list_window.set_handler(:previous, method(:load_previous_teleport_map_page))
+    @teleport_map_list_window.set_handler(:next, method(:load_next_teleport_map_page))
+    @teleport_map_list_window.set_handler(:cancel, method(:close_teleport_map_list))
+  end
+
+  def dispose_teleport_map_list
+    defer_research_mod_window_dispose(@teleport_map_list_window)
+    @teleport_map_list_window = nil
+  end
+
+  def close_teleport_map_list
+    dispose_teleport_map_list
+    close_teleport_browser
+  end
+
+  def reinput_teleport_map_start_id
+    @teleport_map_list_window.hide
+    @teleport_map_list_window.deactivate
+    @teleport_map_input_return = :map
+    open_teleport_map_id_input
+  end
+
+  def load_next_teleport_map_page
+    next_start_id = @teleport_map_list_window.page[:next_start_id]
+    return @teleport_map_list_window.activate unless next_start_id
+
+    @teleport_map_history.push(@teleport_map_list_window.page[:start_id])
+    @teleport_map_id = next_start_id
+    dispose_teleport_map_list
+    open_teleport_map_list(next_start_id)
+  end
+
+  def load_previous_teleport_map_page
+    previous_start_id = @teleport_map_history.pop
+    previous_start_id ||= @teleport_map_list_window.page[:previous_start_id]
+    return @teleport_map_list_window.activate unless previous_start_id
+
+    @teleport_map_id = previous_start_id
+    dispose_teleport_map_list
+    open_teleport_map_list(previous_start_id)
+  end
+
+  def select_teleport_map
+    map_id = @teleport_map_list_window.current_ext
+    unless ResearchMod.map_data(map_id)
+      Sound.play_buzzer
+      @teleport_map_list_window.activate
+      @teleport_help_window.set_text(format('地图 ID %d 的数据无法读取。请选择其他地图。', map_id))
+      return
+    end
+
+    @teleport_map_id = map_id
+    @teleport_map_list_window.hide
+    @teleport_map_list_window.deactivate
     open_teleport_event_list
   end
 
@@ -10685,7 +10939,7 @@ class Scene_ResearchMod < Scene_MenuBase
     )
     @teleport_event_window.set_handler(:select, method(:select_teleport_event))
     @teleport_event_window.set_handler(:reinput, method(:reinput_teleport_map_id))
-    @teleport_event_window.set_handler(:cancel, method(:close_teleport_browser))
+    @teleport_event_window.set_handler(:cancel, method(:close_teleport_event_list))
   end
 
   def dispose_teleport_event_list
@@ -10693,10 +10947,21 @@ class Scene_ResearchMod < Scene_MenuBase
     @teleport_event_window = nil
   end
 
+  def close_teleport_event_list
+    dispose_teleport_event_list
+    if @teleport_map_list_window
+      @teleport_map_list_window.show
+      @teleport_map_list_window.activate
+      @teleport_map_list_window.update_help
+    else
+      close_teleport_browser
+    end
+  end
+
   def reinput_teleport_map_id
     @teleport_event_window.hide
     @teleport_event_window.deactivate
-    @teleport_return_to_event_list = true
+    @teleport_map_input_return = :event
     open_teleport_map_id_input
   end
 
@@ -10823,17 +11088,20 @@ class Scene_ResearchMod < Scene_MenuBase
     defer_research_mod_window_dispose(@teleport_coordinate_input_window)
     defer_research_mod_window_dispose(@teleport_coordinate_window)
     defer_research_mod_window_dispose(@teleport_event_window)
+    defer_research_mod_window_dispose(@teleport_map_list_window)
     defer_research_mod_window_dispose(@teleport_map_id_window)
     defer_research_mod_window_dispose(@teleport_help_window)
     @teleport_confirm_window = nil
     @teleport_coordinate_input_window = nil
     @teleport_coordinate_window = nil
     @teleport_event_window = nil
+    @teleport_map_list_window = nil
     @teleport_map_id_window = nil
     @teleport_help_window = nil
     @teleport_event = nil
     @teleport_coordinate_axis = nil
-    @teleport_return_to_event_list = false
+    @teleport_map_input_return = nil
+    @teleport_map_history = nil
     @command_window.activate
   end
 
@@ -10942,6 +11210,7 @@ class Scene_ResearchMod < Scene_MenuBase
 
   def load_previous_lose_event_page
     previous_start_id = @lose_event_history.pop
+    previous_start_id ||= @lose_event_list_window.page[:previous_start_id]
     return @lose_event_list_window.activate unless previous_start_id
 
     @lose_event_start_id = previous_start_id
