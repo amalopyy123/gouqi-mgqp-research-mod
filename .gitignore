@@ -1,0 +1,23 @@
+# Game saves and runtime data
+Save/
+Save*/
+*.rvdata2
+*.rvdata2.*
+
+# Logs and temporary diagnostics
+*.log
+errors.txt
+lastError
+extract.log
+syntaxerror.txt
+
+# Tool caches and generated files
+MTool_MapDataCache/
+*.tmp
+*.bak
+
+# Archives and game binaries
+*.zip
+*.rar
+*.7z
+*.exe
