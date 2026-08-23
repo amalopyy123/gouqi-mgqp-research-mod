@@ -27,6 +27,7 @@ module ResearchMod
   PANTY_ARMOR_ID_RANGE = (1801..2097)
   MILK_ITEM_ID_RANGE = (1001..1741)
   MARRIAGE_ARMOR_ID_RANGE = (8001..8020)
+  CD_ITEM_ID_RANGE = (1801..1832)
   SMALL_MEDAL_ITEM_ID = 32
   LARGE_MEDAL_ITEM_ID = 900
   LEWD_SOUL_ITEM_ID = 628
@@ -761,6 +762,27 @@ end
     gained
   end
 
+  def self.cd_items
+    CD_ITEM_ID_RANGE.map { |item_id| $data_items[item_id] }.compact.select do |item|
+      !item.name.empty?
+    end
+  end
+
+  def self.owned_cd_count
+    cd_items.count { |item| $game_party.has_item?(item) }
+  end
+
+  def self.gain_all_cds
+    gained = 0
+    cd_items.each do |item|
+      next if $game_party.has_item?(item)
+
+      $game_party.gain_item(item, 1)
+      gained += 1
+    end
+    gained
+  end
+
   def self.database(kind)
     case kind
     when :item then $data_items
@@ -1278,6 +1300,33 @@ end
     return format('图像：地图图块 Tile ID %d', tile_id) if tile_id > 0
 
     '图像：无'
+  end
+
+  def self.event_graphic_data(map_id, event)
+    return nil unless event && event.respond_to?(:pages)
+
+    page_index = active_event_page_index(map_id, event)
+    page_index = 0 if page_index.nil? && !event.pages.empty?
+    page = page_index.nil? ? nil : event.pages[page_index]
+    return nil unless page && page.respond_to?(:graphic)
+
+    graphic = page.graphic
+    data = {
+      :character_name => graphic.character_name.to_s,
+      :character_index => graphic.character_index.to_i,
+      :tile_id => graphic.tile_id.to_i
+    }
+    if current_map_id?(map_id)
+      runtime_event = $game_map.events[event.id]
+      if runtime_event
+        data[:character_name] = runtime_event.instance_variable_get(:@character_name).to_s
+        data[:character_index] = runtime_event.instance_variable_get(:@character_index).to_i
+        data[:tile_id] = runtime_event.instance_variable_get(:@tile_id).to_i
+      end
+    end
+    data
+  rescue
+    nil
   end
 
   def self.event_page_status(map_id, event, page_index, active_page_index = nil)
@@ -2673,7 +2722,7 @@ end
           end
           preview = battle_dialogue_first_sentence(all_lines)
           entries << {
-            :category => '誘惑反应',
+            :category => '诱惑反应',
             :skill_id => skill_id,
             :skill_name => skill_name,
             :word_index => word_index + 1,
@@ -3118,7 +3167,7 @@ end
               :category => if mode == :playful
                              '爱玩'
                            elsif mode == :temptation
-                             '誘惑反应'
+                             '诱惑反应'
                            else
                              '技能台词'
                            end,
@@ -3248,6 +3297,33 @@ end
 
   def self.toggle_all_dialogue_force_party
     enabled = !all_dialogue_force_party?
+    $game_system.instance_variable_set(ALL_DIALOGUE_FORCE_PARTY_KEY, enabled)
+    enabled
+  end
+
+  def self.all_dialogue_state
+    candidate_enabled = candidate_dialogue_view?
+    force_party_enabled = all_dialogue_force_party?
+    return :enabled if candidate_enabled && force_party_enabled
+    return :disabled unless candidate_enabled || force_party_enabled
+
+    :partial
+  end
+
+  def self.all_dialogue_state_text
+    case all_dialogue_state
+    when :enabled
+      '已开启'
+    when :partial
+      '部分开启'
+    else
+      '已关闭'
+    end
+  end
+
+  def self.toggle_all_dialogue
+    enabled = all_dialogue_state != :enabled
+    $game_system.instance_variable_set(CANDIDATE_DIALOGUE_VIEW_KEY, enabled)
     $game_system.instance_variable_set(ALL_DIALOGUE_FORCE_PARTY_KEY, enabled)
     enabled
   end
@@ -4431,9 +4507,9 @@ class Window_ResearchModBattleDialogueMain < Window_Command
   def make_command_list
     add_command('搭话模拟', :custom_talk)
     add_command('特殊战斗台词', :special)
+    add_command('效果反应台词', :reaction)
     add_command('我方技能台词', :party_skill)
     add_command('敌方技能台词', :enemy_skill)
-    add_command('效果反应台词', :reaction)
     add_command('双方组合预览', :combo)
     add_command('返回', :cancel)
   end
@@ -4515,7 +4591,7 @@ class Window_ResearchModBattleDialogueSpecialMode < Window_Command
     add_command('歌う', :sing)
     add_command('变身类', :transformation)
     add_command('爱玩', :playful)
-    add_command('誘惑反应', :temptation)
+    add_command('诱惑反应', :temptation)
     add_command('返回', :cancel)
   end
 end
@@ -4688,7 +4764,7 @@ class Window_ResearchModBattleEnemyDialogueList < Window_Command
   end
 
   def special_dialogue_entry?(entry)
-    ['对话台词', '对话回应', '选项回应', '爱玩', '誘惑反应'].include?(entry[:category])
+    ['对话台词', '对话回应', '选项回应', '爱玩', '诱惑反应'].include?(entry[:category])
   end
 
   def dialogue_candidate_index(entry)
@@ -5229,7 +5305,7 @@ class Window_ResearchModBattleEditTalkList < Window_Command
 end
 class Window_ResearchModBattleEditState < Window_ResearchModBattleEditBase
   def make_command_list
-    add_command('誘惑', :temptation)
+    add_command('诱惑', :temptation)
     add_command('返回', :cancel)
   end
 
@@ -5237,7 +5313,7 @@ class Window_ResearchModBattleEditState < Window_ResearchModBattleEditBase
     return unless help_window
 
     text = current_symbol == :temptation ?
-      '强制赋予或解除誘惑状态（状态ID 26）。' :
+      '强制赋予或解除诱惑状态（状态ID 26）。' :
       '返回战斗修改菜单。'
     help_window.set_text(text)
   end
@@ -5245,8 +5321,8 @@ end
 
 class Window_ResearchModBattleEditTemptationAction < Window_ResearchModBattleEditBase
   def make_command_list
-    add_command('赋予誘惑', :add, !ResearchMod.temptation_immunity?)
-    add_command('解除誘惑', :remove)
+    add_command('赋予诱惑', :add, !ResearchMod.temptation_immunity?)
+    add_command('解除诱惑', :remove)
     add_command('返回', :cancel)
   end
 
@@ -5256,12 +5332,12 @@ class Window_ResearchModBattleEditTemptationAction < Window_ResearchModBattleEdi
     text = case current_symbol
            when :add
              if ResearchMod.temptation_immunity?
-               '“敌我全员誘惑免疫”已开启，赋予操作不可用。'
+               '“敌我全员诱惑免疫”已开启，赋予操作不可用。'
              else
-               '选择敌我成员并强制赋予誘惑，无视目标状态抗性。'
+               '选择敌我成员并强制赋予诱惑，无视目标状态抗性。'
              end
            when :remove
-             '选择敌我成员并解除当前的誘惑状态。'
+             '选择敌我成员并解除当前的诱惑状态。'
            else
              '返回异常状态列表。'
            end
@@ -5300,7 +5376,7 @@ class Window_ResearchModBattleEditTarget < Window_ResearchModBattleEditBase
   end
 
   def add_battler_command(side, battler)
-    marker = battler.state?(ResearchMod::TEMPTATION_STATE_ID) ? '【誘惑】' : ''
+    marker = battler.state?(ResearchMod::TEMPTATION_STATE_ID) ? '【诱惑】' : ''
     add_target_command(format('%s：%s%s', side, battler.name, marker), [battler])
   end
 
@@ -5322,11 +5398,11 @@ class Window_ResearchModBattleEditTarget < Window_ResearchModBattleEditBase
     return unless help_window
 
     if current_symbol == :select
-      action_text = @action == :add ? '赋予誘惑' : '解除誘惑'
+      action_text = @action == :add ? '赋予诱惑' : '解除诱惑'
       help_window.set_text(format('%s：%s。确认后进入最终确认。', action_text,
                                   target_label))
     else
-      help_window.set_text('返回誘惑操作菜单。')
+      help_window.set_text('返回诱惑操作菜单。')
     end
   end
 end
@@ -5353,7 +5429,7 @@ class Window_ResearchModBattleEditConfirm < Window_ResearchModBattleEditBase
   def update_help
     return unless help_window
 
-    action_text = @action == :add ? '赋予誘惑' : '解除誘惑'
+    action_text = @action == :add ? '赋予诱惑' : '解除诱惑'
     help_window.set_text(format('目标：%s　操作：%s。', @target_label, action_text))
   end
 end
@@ -5365,7 +5441,7 @@ class Window_PartyCommand < Window_Command
     research_mod_enemy_info_make_command_list
     add_command('敌方信息', :research_enemy_info) if ResearchMod.battle_enemy_status?
     add_command('我方信息', :research_party_info) if ResearchMod.battle_party_status?
-    add_command('双方Cut-in查看', :research_battle_cutin) if ResearchMod.battle_cutin_view?
+    add_command('Cut-in查看', :research_battle_cutin) if ResearchMod.battle_cutin_view?
     add_command('战斗对白模拟', :research_battle_dialogue) if ResearchMod.manual_enemy_dialogue?
     add_command('战斗记录', :research_battle_record) if ResearchMod.battle_record_enabled?
     add_command('战斗修改', :research_battle_edit) if ResearchMod.battle_editor_enabled?
@@ -6625,7 +6701,7 @@ class Scene_Battle < Scene_Base
     else
       Sound.play_buzzer
       @research_mod_battle_edit_help_window.set_text(
-        '没有成员被修改。请检查目标状态或全员誘惑免疫开关。'
+        '没有成员被修改。请检查目标状态或全员诱惑免疫开关。'
       )
     end
   end
@@ -6932,6 +7008,12 @@ class Window_ResearchModCommand < Window_Command
   end
 
   def make_command_list
+    add_command('---------- 地图 ----------', :separator, false)
+    add_command('哈比之羽', :harpy_feather, WarpManager.usable?)
+    add_command('引导之线', :guiding_thread)
+    add_command('任意地图传送', :teleport)
+    add_command('传送坐标记录', :teleport_slots)
+    add_command('地图与事件检查', :map_inspector)
     add_command('---------- 当前角色修改 ----------', :separator, false)
     add_command('切换当前角色：' + @actor.name, :actor)
     add_command(format('严格同步当前人物等级：%d', @actor.base_level), :level)
@@ -6944,30 +7026,26 @@ class Window_ResearchModCommand < Window_Command
     add_command('当前角色全职全种', :unlock_all)
     add_command('保存当前角色备份', :backup)
     add_command('恢复当前角色备份', :restore, ResearchMod.snapshot?(@actor))
-    add_command('---------- 角色与队伍 ----------', :separator, false)
+    add_command('---------- 队伍 ----------', :separator, false)
     party_member_max = ResearchMod.value_current(ResearchMod.value_entry(:party_member_max))
     add_command(format('队伍编成人数上限：%d', party_member_max), :party_member_max)
     add_command(format('地图跟随显示人数：%d', ResearchMod.map_follower_count), :map_follower_count)
     add_command(ResearchMod::PARTY_EDIT_ACTOR_ID_MENU_NAME + '：' + (ResearchMod.party_edit_actor_id? ? '已开启' : '已关闭'), :party_edit_actor_id)
     add_command('全可入队角色加入候补', :recruit_all)
     add_command('全员好感度修改', :set_all_love)
-    add_command('魔王城全对话：' + (ResearchMod.candidate_dialogue_view? ? '已开启' : '已关闭'), :candidate_dialogue)
+    add_command('全对话：' + ResearchMod.all_dialogue_state_text, :all_dialogue)
     add_command('魔王城形态变化（无视事件）：' + (ResearchMod.persona_dialogue_compatibility? ? '已开启' : '已关闭'), :persona_dialogue)
-    add_command('---------- 查看与资源 ----------', :separator, false)
+    add_command('---------- 查看与资源（修改） ----------', :separator, false)
     add_command('角色图鉴', :actor_encyclopedia)
+    add_command('开关与变量修改', :debug_database)
     add_command('数值与货币修改', :value_editor)
     add_command('按ID获取物品／武器／防具', :database_item)
     add_command(format('获得全部内裤（%d/%d）', ResearchMod.owned_panty_count, ResearchMod.panty_armors.size), :gain_all_panties)
     add_command(format('获得全部牛奶（%d/%d）', ResearchMod.owned_milk_count, ResearchMod.milk_items.size), :gain_all_milk)
     add_command(format('获得全部结婚物品（%d/%d）', ResearchMod.owned_marriage_armor_count, ResearchMod.marriage_armors.size), :gain_all_marriage_armors)
+    add_command(format('获得全部CD（%d/%d）', ResearchMod.owned_cd_count, ResearchMod.cd_items.size), :gain_all_cds)
     add_command('当前音乐信息', :audio_info)
     add_command('当前音乐悬浮窗：' + (ResearchMod.audio_overlay_enabled? ? '已开启' : '已关闭'), :audio_overlay)
-    add_command('---------- 地图 ----------', :separator, false)
-    add_command('ハーピーの羽', :harpy_feather, WarpManager.usable?)
-    add_command('導きの糸', :guiding_thread)
-    add_command('任意地图传送', :teleport)
-    add_command('传送坐标记录', :teleport_slots)
-    add_command('地图与事件检查', :map_inspector)
     add_command('---------- 战斗 ----------', :separator, false)
     add_command('自定义战斗', :custom_battle)
     add_command('战败事件查看', :lose_event)
@@ -6986,13 +7064,12 @@ class Window_ResearchModCommand < Window_Command
     add_command('必定入队：' + (ResearchMod.follow_always_success? ? '已开启' : '已关闭'), :follow_success)
     add_command('敌人诱惑事件禁止：' + (ResearchMod.temptation_disabled? ? '已开启' : '已关闭'), :temptation_disabled)
     add_command('敌人诱惑事件无视HP：' + (ResearchMod.temptation_ignore_hp? ? '已开启' : '已关闭'), :temptation_ignore_hp)
-    add_command('敌我全员誘惑免疫：' + (ResearchMod.temptation_immunity? ? '已开启' : '已关闭'), :temptation_immunity)
+    add_command('敌我全员诱惑免疫：' + (ResearchMod.temptation_immunity? ? '已开启' : '已关闭'), :temptation_immunity)
     add_command('战败后跳过败北事件：' + (ResearchMod.lose_event_skip? ? '已开启' : '已关闭'), :lose_event_skip)
     add_command('穿墙模式：' + (ResearchMod.through_mode? ? '已开启' : '已关闭'), :through_mode)
     add_command('不遇敌：' + (ResearchMod.no_random_encounter? ? '已开启' : '已关闭'), :no_random_encounter)
     add_command('原版禁止遇敌：' + (ResearchMod.original_encounter_disabled? ? '已开启' : '已关闭'), :original_encounter_disabled)
     add_command('防止鲁卡强制置顶：' + (ResearchMod.prevent_event_luca_front? ? '已开启' : '已关闭'), :prevent_luca_front)
-    add_command('开关与变量修改', :debug_database)
     add_command('---------- 实验功能 ----------', :separator, false)
     add_command('实验功能', :experimental)
     add_command('---------- 问题 ----------', :separator, false)
@@ -7019,14 +7096,14 @@ class Window_ResearchModCommand < Window_Command
              '输入角色起始ID后，每批加载最多100名有名称角色；支持上一批、下一批和重新输入起始ID。'
            when :guiding_thread
              '执行物品「導きの糸」的原版效果，从当前迷宫返回地上；不会要求持有，也不会消耗物品。'
+           when :gain_all_cds
+             '获得物品ID 1801～1832的全部CD；已经持有的CD不会重复增加。'
            when :harpy_feather
              '打开物品「ハーピーの羽」的原版传送地点选择；遵守原版地点解锁和传送禁止条件，但不会消耗物品。'
            when :reflection_meeting
              ResearchMod::REFLECTION_MEETING_HELP_TEXT
-           when :candidate_dialogue
-             '开启后，候补角色相关的魔王城对话可以在不满足原条件时查看。'
-           when :all_dialogue_force_party
-             '开启后，对话会把相关角色视为已在队伍，显示更多队友相关对话。'
+           when :all_dialogue
+             '开启后，可浏览角色的默认、戒指及队友相关对话；实际对话判定也会无视角色是否在队伍或候补。\n对话浏览本身不执行事件效果，但无视入队条件可能改变实际事件的对话分支。'
            when :steal_success
              '开启后，盗む（偷窃）相关判定必定成功，包括可偷取物品和成功率检查。'
            when :milk_success
@@ -7038,7 +7115,7 @@ class Window_ResearchModCommand < Window_Command
            when :temptation_disabled
              '开启后，完全跳过敌人诱惑公共事件；无论是否装备香水、敌人HP多少都不会触发。普通敌方对话仍保留。'
            when :temptation_immunity
-             '开启后，敌我全员无法获得誘惑状态，并立即解除当前已有的誘惑。\n建议同时开启“敌人诱惑事件禁止”，两者属于不同机制。'
+             '开启后，敌我全员无法获得诱惑状态，并立即解除当前已有的诱惑。\n建议同时开启“敌人诱惑事件禁止”，两者属于不同机制。'
            when :lose_event_skip
              '开启后，战败时直接跳过败北事件并进入原版战败后处理。\n作者标记为不可跳过的特殊败北事件仍按原版执行。'
            when :sure_hit_kill
@@ -7057,13 +7134,13 @@ class Window_ResearchModCommand < Window_Command
            when :battle_party_status
              '开启后，战斗菜单显示我方队员的等级、HP、MP、职业、种族和状态。'
            when :battle_cutin_view
-             '开启后，战斗菜单增加双方Cut-in查看，可预览我方和敌方配置的技能图片。'
+             '开启后，战斗菜单增加Cut-in查看，可预览我方和敌方配置的技能图片。'
            when :battle_record
              '开启后，记录本场战斗的技能、伤害、恢复和状态文字，可从战斗菜单查看。'
            when :manual_enemy_dialogue
              '开启后，可在战斗菜单查看双方技能台词、效果反应，并手动组合释放者与目标对白。'
            when :battle_editor
-             '开启后，战斗队伍指令增加“战斗修改”，增加如强制赋予或解除敵我成员的誘惑状态等功能'
+             '开启后，战斗队伍指令增加“战斗修改”，增加如强制赋予或解除敵我成员的诱惑状态等功能'
            when :audio_overlay
              '开启后，地图和战斗右上角持续显示当前BGM与BGS文件名；音乐变化时自动刷新。'
            when :value_editor
@@ -7544,7 +7621,7 @@ class Window_ResearchModActorEncyclopediaList < Window_Command
   def update_help
     actor = current_ext
     if actor && current_symbol == :select
-      text = format('角色ID %d　%s\n确认后选择查看备注、固有アビリティ、Picture路径或Cut-in图片。',
+      text = format('角色ID %d　%s\n确认后选择查看备注、固有能力、立绘、Picture路径或Cut-in图片。',
                     actor.id, actor.name)
       @detail_window.set_message(text.gsub(92.chr + 'n', 10.chr))
     else
@@ -7609,6 +7686,23 @@ class Window_ResearchModActorEncyclopediaMode < Window_Command
 
   def cursor_left(wrap = false)
     Sound.play_cursor if @detail_window.scroll_page(-1)
+  end
+end
+
+class Window_ResearchModActorEncyclopediaMode
+  alias research_mod_make_command_list_without_stand_picture make_command_list
+
+  def make_command_list
+    research_mod_make_command_list_without_stand_picture
+    index = @list.index { |command| command[:symbol] == :cutin_preview }
+    return unless index
+
+    @list.insert(index, {
+      :name => '立绘查看',
+      :symbol => :stand_picture,
+      :enabled => !ResearchMod.actor_image_name(@actor).empty?,
+      :ext => nil
+    })
   end
 end
 
@@ -8566,7 +8660,107 @@ class Window_ResearchModMapIdInput < Window_NumberInputBase
   end
 end
 
+module ResearchModEventThumbnailWindow
+  EVENT_THUMBNAIL_SIZE = 32
+  EVENT_FALLBACK_ICON = 55
+
+  def item_height
+    40
+  end
+
+  def draw_item(index)
+    rect = item_rect(index)
+    command = @list[index]
+    return unless command
+
+    change_color(normal_color, command[:enabled])
+    event = command[:symbol] == :select ? command_ext(index) : nil
+    if event
+      draw_event_thumbnail(event, rect, command[:enabled])
+      text_x = rect.x + EVENT_THUMBNAIL_SIZE + 8
+      text_width = [rect.width - EVENT_THUMBNAIL_SIZE - 8, 0].max
+      text_y = rect.y + (rect.height - line_height) / 2
+      draw_text(text_x, text_y, text_width, line_height, command[:name].to_s, 0)
+    else
+      text_y = rect.y + (rect.height - line_height) / 2
+      draw_text(rect.x, text_y, rect.width, line_height, command[:name].to_s, 0)
+    end
+  end
+
+  def draw_event_thumbnail(event, rect, enabled)
+    x = rect.x + (rect.width > EVENT_THUMBNAIL_SIZE ? 4 : 0)
+    y = rect.y + (rect.height - EVENT_THUMBNAIL_SIZE) / 2
+    graphic = ResearchMod.event_graphic_data(@map_id, event)
+    if graphic
+      character_name = graphic[:character_name].to_s
+      if !character_name.empty? && draw_event_character_thumbnail(
+        character_name, graphic[:character_index].to_i, x, y, enabled
+      )
+        return
+      end
+      if graphic[:tile_id].to_i > 0 && draw_event_tile_thumbnail(
+        graphic[:tile_id].to_i, x, y, enabled
+      )
+        return
+      end
+    end
+    draw_icon(EVENT_FALLBACK_ICON, x + 4, y + 4, enabled)
+  end
+
+  def draw_event_character_thumbnail(character_name, character_index, x, y, enabled)
+    bitmap = Cache.character(character_name)
+    sign = character_name[/^[\!\$]./]
+    cw = sign && sign.include?('$') ? bitmap.width / 3 : bitmap.width / 12
+    ch = sign && sign.include?('$') ? bitmap.height / 4 : bitmap.height / 8
+    return false if cw <= 0 || ch <= 0
+
+    src_rect = Rect.new((character_index % 4 * 3 + 1) * cw,
+                        (character_index / 4 * 4) * ch, cw, ch)
+    draw_event_thumbnail_bitmap(bitmap, src_rect, x, y, enabled)
+  rescue
+    false
+  end
+
+  def draw_event_tile_thumbnail(tile_id, x, y, enabled)
+    map = ResearchMod.map_data(@map_id)
+    return false unless map
+
+    tileset = if ResearchMod.current_map_id?(@map_id) &&
+                 defined?($game_map) && $game_map && $game_map.respond_to?(:tileset)
+                $game_map.tileset
+              elsif defined?($data_tilesets) && $data_tilesets &&
+                    map.respond_to?(:tileset_id)
+                $data_tilesets[map.tileset_id]
+              end
+    names = tileset && tileset.respond_to?(:tileset_names) ? tileset.tileset_names : nil
+    bitmap = names && Cache.tileset(names[5 + tile_id / 256])
+    return false unless bitmap
+
+    sx = (tile_id / 128 % 2 * 8 + tile_id % 8) * 32
+    sy = (tile_id % 256 / 8 % 16) * 32
+    src_rect = Rect.new(sx, sy, 32, 32)
+    draw_event_thumbnail_bitmap(bitmap, src_rect, x, y, enabled)
+  rescue
+    false
+  end
+
+  def draw_event_thumbnail_bitmap(bitmap, src_rect, x, y, enabled)
+    scale = [EVENT_THUMBNAIL_SIZE.to_f / src_rect.width,
+             EVENT_THUMBNAIL_SIZE.to_f / src_rect.height].min
+    width = [(src_rect.width * scale).round, 1].max
+    height = [(src_rect.height * scale).round, 1].max
+    dest_x = x + (EVENT_THUMBNAIL_SIZE - width) / 2
+    dest_y = y + (EVENT_THUMBNAIL_SIZE - height) / 2
+    contents.stretch_blt(Rect.new(dest_x, dest_y, width, height), bitmap,
+                          src_rect, enabled ? 255 : translucent_alpha)
+    true
+  rescue
+    false
+  end
+end
+
 class Window_ResearchModTeleportEventList < Window_Command
+  include ResearchModEventThumbnailWindow
   def initialize(map_id, help_window)
     @map_id = map_id
     @events = ResearchMod.map_events(map_id)
@@ -8913,11 +9107,12 @@ class Window_ResearchModTeleportCoordinateInput < Window_NumberInputBase
 end
 
 class Window_ResearchModTeleportConfirm < Window_Command
-  def initialize(map_id, event, x, y, help_window)
+  def initialize(map_id, event, x, y, help_window, cancel_label = nil)
     @map_id = map_id
     @event = event
     @target_x = x
     @target_y = y
+    @cancel_label = cancel_label || '取消并返回坐标编辑'
     super(0, 0)
     self.help_window = help_window
     self.x = (Graphics.width - width) / 2
@@ -8936,7 +9131,7 @@ class Window_ResearchModTeleportConfirm < Window_Command
 
   def make_command_list
     add_command('确认传送', :confirm)
-    add_command('取消并返回坐标编辑', :cancel)
+    add_command(@cancel_label, :cancel)
   end
 
   def update_help
@@ -9012,6 +9207,7 @@ class Window_ResearchModMapList < Window_Command
 end
 
 class Window_ResearchModMapEventList < Window_Command
+  include ResearchModEventThumbnailWindow
   def initialize(map_id, help_window)
     @map_id = map_id
     @events = ResearchMod.map_events(map_id)
@@ -9089,6 +9285,7 @@ class Window_ResearchModMapPageList < Window_Command
                   :select, true, page_index)
     end
     add_command('查看与修改独立开关 A～D', :self_switch)
+    add_command('传送到该事件坐标', :teleport)
     add_command('返回', :cancel)
   end
 
@@ -9114,6 +9311,11 @@ class Window_ResearchModMapPageList < Window_Command
       help_window.set_text(format('地图 %04d / 事件 %04d「%s」\n查看并修改该事件专属的独立开关 A、B、C、D。',
                                   @map_id, @event.id,
                                   ResearchMod.event_display_name(@event)).gsub(92.chr + 'n', 10.chr))
+    elsif current_symbol == :teleport
+      help_window.set_text(format('地图 %04d「%s」\n事件 %04d「%s」　坐标 X=%d Y=%d\n确认后传送到该事件的原始坐标；如果卡住，请选择其他事件或开启“穿墙模式”。',
+                                  @map_id, ResearchMod.map_name(@map_id),
+                                  @event.id, ResearchMod.event_display_name(@event),
+                                  @event.x, @event.y).gsub(92.chr + 'n', 10.chr))
     else
       help_window.set_text('返回当前地图的事件列表。')
     end
@@ -9542,9 +9744,9 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:gain_all_panties, method(:gain_all_panties))
     @command_window.set_handler(:gain_all_milk, method(:gain_all_milk))
     @command_window.set_handler(:gain_all_marriage_armors, method(:gain_all_marriage_armors))
+    @command_window.set_handler(:gain_all_cds, method(:gain_all_cds))
     @command_window.set_handler(:persona_dialogue, method(:toggle_persona_dialogue_compatibility))
-    @command_window.set_handler(:candidate_dialogue, method(:toggle_candidate_dialogue_view))
-    @command_window.set_handler(:all_dialogue_force_party, method(:toggle_all_dialogue_force_party))
+    @command_window.set_handler(:all_dialogue, method(:toggle_all_dialogue))
     @command_window.set_handler(:steal_success, method(:toggle_steal_always_success))
     @command_window.set_handler(:milk_success, method(:toggle_milk_always_success))
     @command_window.set_handler(:drop_success, method(:toggle_drop_always_success))
@@ -9579,10 +9781,12 @@ class Scene_ResearchMod < Scene_MenuBase
     dispose_research_mod_deferred_windows
     super
     update_actor_cutin_preview if @actor_cutin_preview
+    update_actor_stand_picture_preview if @actor_stand_picture_preview
   end
 
   def terminate
     dispose_actor_cutin_preview
+    dispose_actor_stand_picture_preview
     dispose_research_mod_deferred_windows
     @command_help_window.dispose if @command_help_window && !@command_help_window.disposed?
     @command_help_window = nil
@@ -9927,6 +10131,7 @@ class Scene_ResearchMod < Scene_MenuBase
     @actor_encyclopedia_mode_window.set_handler(:note, method(:read_actor_encyclopedia_detail))
     @actor_encyclopedia_mode_window.set_handler(:ability, method(:read_actor_encyclopedia_detail))
     @actor_encyclopedia_mode_window.set_handler(:picture_path, method(:read_actor_encyclopedia_detail))
+    @actor_encyclopedia_mode_window.set_handler(:stand_picture, method(:open_actor_stand_picture_preview))
     @actor_encyclopedia_mode_window.set_handler(:cutin_preview, method(:open_actor_cutin_list))
     @actor_encyclopedia_mode_window.set_handler(:cancel, method(:close_actor_encyclopedia_mode))
   end
@@ -9941,6 +10146,58 @@ class Scene_ResearchMod < Scene_MenuBase
   def close_actor_encyclopedia_detail
     @actor_encyclopedia_detail_window.deactivate
     @actor_encyclopedia_mode_window.activate
+  end
+
+  def open_actor_stand_picture_preview
+    actor = @actor_encyclopedia_list_window.current_ext
+    file_name = ResearchMod.actor_image_name(actor)
+    if file_name.empty?
+      Sound.play_buzzer
+      @actor_encyclopedia_mode_window.activate
+      @actor_encyclopedia_detail_window.set_message('该角色未配置立绘。')
+      return false
+    end
+
+    @actor_stand_picture_help_window = Window_Help.new(3)
+    @actor_stand_picture_help_window.y = Graphics.height - @actor_stand_picture_help_window.height
+    @actor_stand_picture_help_window.z = 550
+    @actor_stand_picture_preview = ResearchModActorCutinPreview.new(
+      file_name, Graphics.height - @actor_stand_picture_help_window.height
+    )
+    @actor_encyclopedia_mode_window.deactivate
+    @actor_stand_picture_help_window.set_text(
+      format('立绘：%s\n方向键无特殊操作；按取消返回角色查看类型菜单。', file_name).gsub(92.chr + 'n', 10.chr)
+    )
+    true
+  rescue
+    Sound.play_buzzer
+    dispose_actor_stand_picture_preview
+    defer_research_mod_window_dispose(@actor_stand_picture_help_window)
+    @actor_stand_picture_help_window = nil
+    @actor_encyclopedia_detail_window.set_message(
+      format('立绘无法读取：Graphics/Pictures/%s\n可能是文件缺失或资源配置无效。', file_name).gsub(92.chr + 'n', 10.chr)
+    )
+    @actor_encyclopedia_mode_window.activate
+    false
+  end
+
+  def update_actor_stand_picture_preview
+    close_actor_stand_picture_preview if Input.trigger?(:B)
+  end
+
+  def close_actor_stand_picture_preview
+    dispose_actor_stand_picture_preview
+    defer_research_mod_window_dispose(@actor_stand_picture_help_window)
+    @actor_stand_picture_help_window = nil
+    @actor_encyclopedia_mode_window.activate if @actor_encyclopedia_mode_window
+    @actor_encyclopedia_mode_window.update_help if @actor_encyclopedia_mode_window
+  end
+
+  def dispose_actor_stand_picture_preview
+    if @actor_stand_picture_preview
+      @actor_stand_picture_preview.dispose
+      @actor_stand_picture_preview = nil
+    end
   end
 
   def open_actor_cutin_list
@@ -10069,9 +10326,11 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def close_actor_encyclopedia
+    dispose_actor_stand_picture_preview
     dispose_actor_cutin_preview
     defer_research_mod_window_dispose(@actor_cutin_list_window)
     defer_research_mod_window_dispose(@actor_cutin_help_window)
+    defer_research_mod_window_dispose(@actor_stand_picture_help_window)
     defer_research_mod_window_dispose(@actor_encyclopedia_mode_window)
     defer_research_mod_window_dispose(@actor_encyclopedia_input_window)
     defer_research_mod_window_dispose(@actor_encyclopedia_list_window)
@@ -10079,6 +10338,7 @@ class Scene_ResearchMod < Scene_MenuBase
     @actor_encyclopedia_mode_window = nil
     @actor_cutin_list_window = nil
     @actor_cutin_help_window = nil
+    @actor_stand_picture_help_window = nil
     @actor_cutin_preview_index = nil
     @actor_cutin_page = nil
     @actor_encyclopedia_input_window = nil
@@ -10462,6 +10722,7 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def close_map_inspector
+    defer_research_mod_window_dispose(@map_teleport_confirm_window)
     defer_research_mod_window_dispose(@self_switch_action_window)
     defer_research_mod_window_dispose(@self_switch_list_window)
     defer_research_mod_window_dispose(@map_detail_window)
@@ -10472,6 +10733,7 @@ class Scene_ResearchMod < Scene_MenuBase
     defer_research_mod_window_dispose(@map_mode_window)
     defer_research_mod_window_dispose(@map_help_window)
     @self_switch_action_window = nil
+    @map_teleport_confirm_window = nil
     @self_switch_list_window = nil
     @map_detail_window = nil
     @map_page_window = nil
@@ -10624,7 +10886,49 @@ class Scene_ResearchMod < Scene_MenuBase
     )
     @map_page_window.set_handler(:select, method(:open_map_event_detail))
     @map_page_window.set_handler(:self_switch, method(:open_self_switch_list))
+    @map_page_window.set_handler(:teleport, method(:open_map_event_teleport_confirm))
     @map_page_window.set_handler(:cancel, method(:close_map_page_list))
+  end
+
+  def open_map_event_teleport_confirm
+    @map_page_window.hide
+    @map_page_window.deactivate
+    @map_teleport_confirm_window = Window_ResearchModTeleportConfirm.new(
+      @selected_map_id, @selected_map_event,
+      @selected_map_event.x, @selected_map_event.y, @map_help_window,
+      '取消并返回事件菜单'
+    )
+    @map_teleport_confirm_window.set_handler(
+      :confirm, method(:execute_map_event_teleport)
+    )
+    @map_teleport_confirm_window.set_handler(
+      :cancel, method(:close_map_event_teleport_confirm)
+    )
+  end
+
+  def close_map_event_teleport_confirm
+    defer_research_mod_window_dispose(@map_teleport_confirm_window)
+    @map_teleport_confirm_window = nil
+    @map_page_window.show
+    @map_page_window.activate
+    @map_page_window.update_help
+  end
+
+  def execute_map_event_teleport
+    success = ResearchMod.reserve_teleport(
+      @selected_map_id, @selected_map_event.x, @selected_map_event.y
+    )
+    unless success
+      Sound.play_buzzer
+      @map_teleport_confirm_window.activate
+      @map_help_window.set_text(
+        '目标地图或事件坐标无效，无法执行传送。取消后请选择其他事件。'
+      )
+      return
+    end
+
+    close_map_inspector
+    SceneManager.goto(Scene_Map)
   end
 
   def open_self_switch_list
@@ -11698,20 +12002,20 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.activate
   end
 
+  def gain_all_cds
+    ResearchMod.gain_all_cds
+    @command_window.refresh
+    @command_window.activate
+  end
+
   def toggle_persona_dialogue_compatibility
     ResearchMod.toggle_persona_dialogue_compatibility
     @command_window.refresh
     @command_window.activate
   end
 
-  def toggle_candidate_dialogue_view
-    ResearchMod.toggle_candidate_dialogue_view
-    @command_window.refresh
-    @command_window.activate
-  end
-
-  def toggle_all_dialogue_force_party
-    ResearchMod.toggle_all_dialogue_force_party
+  def toggle_all_dialogue
+    ResearchMod.toggle_all_dialogue
     @command_window.refresh
     @command_window.activate
   end
