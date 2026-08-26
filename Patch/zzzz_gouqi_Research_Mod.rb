@@ -71,6 +71,16 @@ module ResearchMod
   PARTY_EDIT_ACTOR_ID_HELP_TEXT =
     '开启后，打开系统的编辑队伍时，' + 10.chr +
     '在队伍和候补角色名称前显示对应Actor ID。'
+  COOKING_NO_COST_KEY = :@research_mod_cooking_no_cost
+  ALCHEMY_NO_COST_KEY = :@research_mod_alchemy_no_cost
+  MAGIC_BOOK_NO_COST_KEY = :@research_mod_magic_book_no_cost
+  MERCHANT_NO_COST_KEY = :@research_mod_merchant_no_cost
+  EX_ITEM_NO_COST_KEY = :@research_mod_ex_item_no_cost
+  COOKING_SKILL_TYPE_ID = 44
+  ALCHEMY_SKILL_TYPE_ID = 41
+  MAGIC_BOOK_SKILL_TYPE_ID = 42
+  MERCHANT_SKILL_TYPE_ID = 34
+  EX_ITEM_SKILL_TYPE_ID = 35
   REFLECTION_MEETING_MENU_NAME = '反省会查看'
   REFLECTION_MEETING_HELP_TEXT =
     '按敌人ID查看对应反省会（败北回想）。' + 10.chr + '直接播放参加反省会内容，不改变当前地图和坐标。'
@@ -2165,6 +2175,95 @@ end
     enabled
   end
 
+  def self.skill_has_type?(skill, type_id)
+    return false unless skill
+
+    if skill.respond_to?(:stypes)
+      Array(skill.stypes).include?(type_id)
+    else
+      skill.respond_to?(:stype_id) && skill.stype_id == type_id
+    end
+  end
+
+  def self.cooking_no_cost?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(COOKING_NO_COST_KEY) == true
+  end
+
+  def self.cooking_menu_no_item_cost?
+    @cooking_menu_no_item_cost == true
+  end
+
+  def self.cooking_menu_no_item_cost=(enabled)
+    @cooking_menu_no_item_cost = enabled == true
+  end
+
+  def self.toggle_cooking_no_cost
+    enabled = !cooking_no_cost?
+    $game_system.instance_variable_set(COOKING_NO_COST_KEY, enabled)
+    enabled
+  end
+
+  def self.alchemy_no_cost?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(ALCHEMY_NO_COST_KEY) == true
+  end
+
+  def self.toggle_alchemy_no_cost
+    enabled = !alchemy_no_cost?
+    $game_system.instance_variable_set(ALCHEMY_NO_COST_KEY, enabled)
+    enabled
+  end
+
+  def self.magic_book_no_cost?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(MAGIC_BOOK_NO_COST_KEY) == true
+  end
+
+  def self.toggle_magic_book_no_cost
+    enabled = !magic_book_no_cost?
+    $game_system.instance_variable_set(MAGIC_BOOK_NO_COST_KEY, enabled)
+    enabled
+  end
+
+  def self.merchant_no_cost?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(MERCHANT_NO_COST_KEY) == true
+  end
+
+  def self.toggle_merchant_no_cost
+    enabled = !merchant_no_cost?
+    $game_system.instance_variable_set(MERCHANT_NO_COST_KEY, enabled)
+    enabled
+  end
+
+  def self.ex_item_no_cost?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(EX_ITEM_NO_COST_KEY) == true
+  end
+
+  def self.toggle_ex_item_no_cost
+    enabled = !ex_item_no_cost?
+    $game_system.instance_variable_set(EX_ITEM_NO_COST_KEY, enabled)
+    enabled
+  end
+
+  def self.no_cost_skill?(skill)
+    return :gold if merchant_no_cost? && skill_has_type?(skill, MERCHANT_SKILL_TYPE_ID)
+    cooking_free = cooking_no_cost? || cooking_menu_no_item_cost?
+    return :item if cooking_free && skill_has_type?(skill, COOKING_SKILL_TYPE_ID)
+    return :item if alchemy_no_cost? && skill_has_type?(skill, ALCHEMY_SKILL_TYPE_ID)
+    return :item if magic_book_no_cost? && skill_has_type?(skill, MAGIC_BOOK_SKILL_TYPE_ID)
+    return :item if ex_item_no_cost? && skill_has_type?(skill, EX_ITEM_SKILL_TYPE_ID)
+
+    nil
+  end
+
   def self.temptation_ignore_hp?
     return false unless $game_system
 
@@ -4184,6 +4283,35 @@ class Scene_Warp < Scene_MenuBase
     research_mod_terminate_harpy_feather
   ensure
     ResearchMod.harpy_feather_all_places_active = false
+  end
+end
+
+class Game_Actor
+  alias research_mod_make_cost_value_consumption make_cost_value
+  alias research_mod_skill_cost_item_consumption skill_cost_item
+  alias research_mod_skill_gold_cost_consumption skill_gold_cost
+
+  def skill_cost_item(skill)
+    return [] if ResearchMod.no_cost_skill?(skill) == :item
+
+    research_mod_skill_cost_item_consumption(skill)
+  end
+
+  def skill_gold_cost(skill)
+    return 0 if ResearchMod.no_cost_skill?(skill) == :gold
+
+    research_mod_skill_gold_cost_consumption(skill)
+  end
+
+  def make_cost_value(skill)
+    result = research_mod_make_cost_value_consumption(skill)
+    case ResearchMod.no_cost_skill?(skill)
+    when :gold
+      result[:GOLD] = 0
+    when :item
+      result[:ITEM] = []
+    end
+    result
   end
 end
 
@@ -8099,6 +8227,9 @@ class Window_ResearchModCommand < Window_Command
     add_command('显示战斗记录：' + (ResearchMod.battle_record_enabled? ? '已开启' : '已关闭'), :battle_record)
     add_command('显示对白模拟：' + (ResearchMod.manual_enemy_dialogue? ? '已开启' : '已关闭'), :manual_enemy_dialogue)
     add_command('显示战斗修改菜单：' + (ResearchMod.battle_editor_enabled? ? '已开启' : '已关闭'), :battle_editor)
+    add_command('---------- 消耗 ----------', :separator, false)
+    add_command('消耗类技能开关', :consumption)
+    add_command('无消耗料理', :free_cooking)
     add_command('---------- 功能开关（修改） ----------', :separator, false)
     add_command('我方攻击必中必杀：' + (ResearchMod.sure_hit_kill? ? '已开启' : '已关闭'), :sure_hit_kill)
     add_command('偷盗必定成功：' + (ResearchMod.steal_always_success? ? '已开启' : '已关闭'), :steal_success)
@@ -8135,6 +8266,11 @@ class Window_ResearchModCommand < Window_Command
              '设置地图上队首玩家之后的跟随角色数量。' + 10.chr + '0表示不显示跟随者，最多99；' + 10.chr + '数量过高可能明显降低地图性能。'
            when :current_map_containers
              '列出当前地图中生效的宝箱和壶。' + 10.chr + '单个打开会执行原事件；' + 10.chr + '批量操作只处理安全可解析的静态物品容器。'
+           when :custom_teleport_points
+             '管理自定义传送点。' + 10.chr +
+               format('当前地图：%04d「%s」', $game_map.map_id,
+                      ResearchMod.map_name($game_map.map_id)) + 10.chr +
+               format('当前位置：X=%d Y=%d。', $game_player.x, $game_player.y)
            when :chest_hint
              '在能直接判断内容的未开启宝箱或壶上显示提示图标。' + 10.chr +
                format('怪物图标：变量%d=%d；' + 10.chr + '物品图标：变量%d=%d。',
@@ -8204,6 +8340,12 @@ class Window_ResearchModCommand < Window_Command
            when :value_editor
              '可修改金钱、奖牌、各类点数、BF奖励进度、BF图鉴统计和累计奖牌兑换数。' + 10.chr +
                '部分统计可能影响图鉴、成就或剧情，修改前建议备份存档。'
+           when :consumption
+             '设置料理、炼金术、魔本术、商技和EXアイテム的消耗。' + 10.chr +
+               '开关只影响技能使用时的素材或金币扣除。'
+           when :free_cooking
+             '列出数据库中的全部料理技能。' + 10.chr +
+               '使用时不消耗食材，也不要求原版战斗外可用条件。'
            when :experimental
              '设置尚处于实验阶段的功能。建议使用独立测试存档。'
             when :stuck_help
@@ -9004,6 +9146,121 @@ class Window_ResearchModValueMenu < Window_Command
     else
       '确认后输入目标值；这是设置最终数值，不是在当前值上增加。'
     end
+  end
+end
+
+class Window_ResearchModConsumptionMenu < Window_Command
+  def initialize(help_window)
+    @consumption_help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @consumption_help_window.height
+  end
+
+  def make_command_list
+    add_command('料理无消耗：' + (ResearchMod.cooking_no_cost? ? '开' : '关'), :cooking)
+    add_command('炼金术无消耗：' + (ResearchMod.alchemy_no_cost? ? '开' : '关'), :alchemy)
+    add_command('魔本术无消耗：' + (ResearchMod.magic_book_no_cost? ? '开' : '关'), :magic_book)
+    add_command('商技无消耗：' + (ResearchMod.merchant_no_cost? ? '开' : '关'), :merchant)
+    add_command('EXアイテム可用无消耗：' + (ResearchMod.ex_item_no_cost? ? '开' : '关'), :ex_item)
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    text = case current_symbol
+           when :cooking
+             '料理技能不消耗料理素材。' + 10.chr + '仅影响技能消耗，不改变技能效果。'
+           when :alchemy
+             '炼金术技能不消耗炼金素材。' + 10.chr + '仅影响技能消耗，不改变技能效果。'
+           when :magic_book
+             '魔本术技能不消耗页面。' + 10.chr + '仅影响技能消耗，不改变技能效果。'
+           when :merchant
+             '商技技能不消耗金币。' + 10.chr + '仅影响技能消耗，不改变获得物品。'
+           when :ex_item
+             'EXアイテム技能不消耗普通道具。' + 10.chr + '仅影响技能消耗，不改变技能效果。'
+           else
+             '返回研究修改器主菜单。'
+           end
+    help_window.set_text(text)
+  end
+end
+
+class Window_ResearchModCookingSkillList < Window_SkillList
+  def make_item_list
+    @data = if @actor && defined?($data_skills)
+            $data_skills.compact.select do |skill|
+                ResearchMod.skill_has_type?(skill, ResearchMod::COOKING_SKILL_TYPE_ID)
+              end
+            else
+              []
+            end
+    @item_cost_window.set_size(@data) if @item_cost_window
+  end
+
+  def enable?(item)
+    !item.nil?
+  end
+
+  def current_item_enabled?
+    !item.nil?
+  end
+end
+
+class Scene_ResearchModCooking < Scene_ItemBase
+  def prepare(actor)
+    @research_mod_actor = actor
+  end
+
+  def start
+    ResearchMod.cooking_menu_no_item_cost = true
+    super
+    @actor = @research_mod_actor || $game_party.menu_actor || $game_party.members[0]
+    @help_window = Window_Help.new(3)
+    @help_window.y = Graphics.height - @help_window.height
+    @item_window = Window_ResearchModCookingSkillList.new(
+      0, 0, Graphics.width, Graphics.height - @help_window.height
+    )
+    @item_window.actor = @actor
+    @item_window.help_window = @help_window
+    @item_window.set_handler(:ok, method(:on_item_ok))
+    @item_window.set_handler(:cancel, method(:return_scene))
+    @item_window.refresh
+    @item_window.select(0) unless @item_window.item_max == 0
+    @item_window.activate
+  end
+
+  def terminate
+    ResearchMod.cooking_menu_no_item_cost = false
+    @item_window.dispose if @item_window && !@item_window.disposed?
+    @help_window.dispose if @help_window && !@help_window.disposed?
+    super
+  end
+
+  def user
+    @actor
+  end
+
+  def play_se_for_item
+    Sound.play_use_skill
+  end
+
+  def on_item_ok
+    @actor.last_skill.object = item if @actor.respond_to?(:last_skill)
+    determine_item
+  end
+
+  def item_usable?
+    !item.nil?
   end
 end
 
@@ -11103,6 +11360,8 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:map_follower_count, method(:open_map_follower_count_editor))
     @command_window.set_handler(:party_edit_actor_id, method(:toggle_party_edit_actor_id))
     @command_window.set_handler(:value_editor, method(:open_value_editor))
+    @command_window.set_handler(:consumption, method(:open_consumption_menu))
+    @command_window.set_handler(:free_cooking, method(:open_free_cooking))
     @command_window.set_handler(:audio_info, method(:open_audio_info))
     @command_window.set_handler(:author_info, method(:open_author_info))
     @command_window.set_handler(:custom_battle, method(:open_custom_battle))
@@ -11226,7 +11485,7 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def close_actor_list
-    @actor_window.dispose
+    defer_research_mod_window_dispose(@actor_window)
     @actor_window = nil
     @command_window.activate
   end
@@ -11356,7 +11615,7 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def close_learning_skill_list
-    @learning_window.dispose
+    defer_research_mod_window_dispose(@learning_window)
     @learning_window = nil
     @command_window.activate
   end
@@ -11694,7 +11953,7 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def close_actor_encyclopedia_mode
-    @actor_encyclopedia_mode_window.dispose
+    defer_research_mod_window_dispose(@actor_encyclopedia_mode_window)
     @actor_encyclopedia_mode_window = nil
     @actor_encyclopedia_detail_window.set_message(
       '选择角色并确认后，可查看备注、固有アビリティ、Picture路径或Cut-in图片。'
@@ -11781,6 +12040,36 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.deactivate
   end
 
+  def open_consumption_menu
+    @consumption_help_window = Window_Help.new(2)
+    @consumption_help_window.y = Graphics.height - @consumption_help_window.height
+    @consumption_menu_window = Window_ResearchModConsumptionMenu.new(
+      @consumption_help_window
+    )
+    @consumption_menu_window.set_handler(:cooking, method(:toggle_cooking_no_cost))
+    @consumption_menu_window.set_handler(:alchemy, method(:toggle_alchemy_no_cost))
+    @consumption_menu_window.set_handler(:magic_book, method(:toggle_magic_book_no_cost))
+    @consumption_menu_window.set_handler(:merchant, method(:toggle_merchant_no_cost))
+    @consumption_menu_window.set_handler(:ex_item, method(:toggle_ex_item_no_cost))
+    @consumption_menu_window.set_handler(:cancel, method(:close_consumption_menu))
+    @command_window.deactivate
+  end
+
+  def open_free_cooking
+    SceneManager.call(Scene_ResearchModCooking)
+    SceneManager.scene.prepare(@actor)
+  end
+
+  def close_consumption_menu
+    defer_research_mod_window_dispose(@consumption_menu_window)
+    defer_research_mod_window_dispose(@consumption_help_window)
+    @consumption_menu_window = nil
+    @consumption_help_window = nil
+    @command_window.refresh
+    @command_window.activate
+    @command_window.update_help
+  end
+
   def open_party_member_max_editor
     @value_entry = ResearchMod.value_entry(:party_member_max)
     @standalone_value_input = true
@@ -11812,8 +12101,8 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def close_value_editor
-    @value_menu_window.dispose
-    @value_help_window.dispose
+    defer_research_mod_window_dispose(@value_menu_window)
+    defer_research_mod_window_dispose(@value_help_window)
     @value_menu_window = nil
     @value_help_window = nil
     @command_window.activate
@@ -11858,7 +12147,7 @@ class Scene_ResearchMod < Scene_MenuBase
     @value_entry = nil
     if @standalone_value_input
       @standalone_value_input = false
-      @value_help_window.dispose if @value_help_window && !@value_help_window.disposed?
+      defer_research_mod_window_dispose(@value_help_window)
       @value_help_window = nil
       @command_window.refresh
       @command_window.activate
@@ -13531,7 +13820,7 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def close_database_item_menu
-    @database_type_window.dispose
+    defer_research_mod_window_dispose(@database_type_window)
     @database_type_window = nil
     @command_window.activate
   end
@@ -13600,8 +13889,8 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def dispose_database_list
-    @database_list_window.dispose if @database_list_window
-    @database_help_window.dispose if @database_help_window
+    defer_research_mod_window_dispose(@database_list_window)
+    defer_research_mod_window_dispose(@database_help_window)
     @database_list_window = nil
     @database_help_window = nil
   end
@@ -13718,6 +14007,41 @@ class Scene_ResearchMod < Scene_MenuBase
     ResearchMod.toggle_drop_always_success
     @command_window.refresh
     @command_window.activate
+  end
+
+  def toggle_cooking_no_cost
+    ResearchMod.toggle_cooking_no_cost
+    @consumption_menu_window.refresh
+    @consumption_menu_window.activate
+    @consumption_menu_window.update_help
+  end
+
+  def toggle_alchemy_no_cost
+    ResearchMod.toggle_alchemy_no_cost
+    @consumption_menu_window.refresh
+    @consumption_menu_window.activate
+    @consumption_menu_window.update_help
+  end
+
+  def toggle_magic_book_no_cost
+    ResearchMod.toggle_magic_book_no_cost
+    @consumption_menu_window.refresh
+    @consumption_menu_window.activate
+    @consumption_menu_window.update_help
+  end
+
+  def toggle_merchant_no_cost
+    ResearchMod.toggle_merchant_no_cost
+    @consumption_menu_window.refresh
+    @consumption_menu_window.activate
+    @consumption_menu_window.update_help
+  end
+
+  def toggle_ex_item_no_cost
+    ResearchMod.toggle_ex_item_no_cost
+    @consumption_menu_window.refresh
+    @consumption_menu_window.activate
+    @consumption_menu_window.update_help
   end
 
   def toggle_temptation_ignore_hp
@@ -13970,7 +14294,7 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def close_persona_list
-    @persona_window.dispose
+    defer_research_mod_window_dispose(@persona_window)
     @persona_window = nil
     @command_window.activate
   end
@@ -14020,7 +14344,7 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def close_class_list
-    @list_window.dispose
+    defer_research_mod_window_dispose(@list_window)
     @list_window = nil
     @command_window.activate
   end
