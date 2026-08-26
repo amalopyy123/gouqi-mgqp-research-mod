@@ -10427,6 +10427,7 @@ class Window_ResearchModContainerAction < Window_Command
     self.help_window = help_window
     self.x = (Graphics.width - width) / 2
     self.y = (Graphics.height - help_window.height - height) / 2
+    self.z = 500
     update_help
   end
 
@@ -12113,7 +12114,6 @@ class Scene_ResearchMod < Scene_MenuBase
 
   def select_current_map_container
     @selected_container_event = @container_list_window.current_ext
-    @container_list_window.hide
     @container_list_window.deactivate
     @container_action_window = Window_ResearchModContainerAction.new(
       @selected_container_event, @container_help_window
