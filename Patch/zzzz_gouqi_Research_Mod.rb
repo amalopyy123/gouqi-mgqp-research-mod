@@ -12,8 +12,10 @@ module ResearchMod
   BATTLE_PAGE_SIZE = 200
   LOSE_EVENT_PAGE_SIZE = 200
   MAP_PAGE_SIZE = 100
-  TELEPORT_SLOT_COUNT = 10
-  TELEPORT_SLOTS_KEY = :@research_mod_teleport_slots
+  CUSTOM_TELEPORT_POINT_COUNT = 10
+  # Migrate the old slot key on first access to preserve saved points.
+  CUSTOM_TELEPORT_POINTS_KEY = :@research_mod_custom_teleport_points
+  CUSTOM_TELEPORT_POINTS_LEGACY_KEY = :@research_mod_teleport_slots
   DEBUG_DATABASE_PAGE_SIZE = 200
   DEBUG_VARIABLE_MAX = 999_999_999
   SELF_SWITCH_KEYS = ['A', 'B', 'C', 'D']
@@ -36,6 +38,15 @@ module ResearchMod
   HARPY_FEATHER_PLACEHOLDER_NAME = '欠番'
   HARPY_FEATHER_ALL_PLACES_KEY = :@research_mod_harpy_feather_all_places
   GUIDING_THREAD_COMMON_EVENT_ID = 31
+  CHEST_HINT_ENABLED_KEY = :@research_mod_chest_hint_enabled
+  CHEST_HINT_VARIABLES_INITIALIZED_KEY =
+    :@research_mod_chest_hint_variables_initialized
+  CHEST_MONSTER_ICON_VARIABLE_ID = 7999
+  CHEST_ITEM_ICON_VARIABLE_ID = 8000
+  CHEST_MONSTER_ICON_DEFAULT = 1
+  CHEST_ITEM_ICON_DEFAULT = 191
+  POT_CHARACTER_INDEX = 6
+  CONTAINER_PENDING_OPEN_KEY = :@research_mod_container_pending_open
 
   STUCK_SANT_MOUNTAIN_SWITCH_ID = 2479
   STUCK_SANT_MOUNTAIN_WARP_SWITCH_ID = 100
@@ -58,10 +69,11 @@ module ResearchMod
   PARTY_EDIT_ACTOR_ID_KEY = :@research_mod_party_edit_actor_id
   PARTY_EDIT_ACTOR_ID_MENU_NAME = '编队显示角色ID'
   PARTY_EDIT_ACTOR_ID_HELP_TEXT =
-    '开启后，打开系统的パーティを編集する时，在队伍和候补角色名称前显示对应Actor ID。'
+    '开启后，打开系统的编辑队伍时，' + 10.chr +
+    '在队伍和候补角色名称前显示对应Actor ID。'
   REFLECTION_MEETING_MENU_NAME = '反省会查看'
   REFLECTION_MEETING_HELP_TEXT =
-    '按敌人ID查看对应反省会（败北回想）。直接播放“反省会に出る”内容，不改变当前地图和坐标。'
+    '按敌人ID查看对应反省会（败北回想）。' + 10.chr + '直接播放参加反省会内容，不改变当前地图和坐标。'
   VALUE_VARIABLE_MAX = 99_999_999
   VALUE_STAT_MAX = 9_999_999
   STEAL_ALWAYS_SUCCESS_KEY = :@research_mod_steal_always_success
@@ -86,6 +98,8 @@ module ResearchMod
   BATTLE_EDITOR_KEY = :@research_mod_battle_editor
   TEMPTATION_IMMUNITY_KEY = :@research_mod_temptation_immunity
   TEMPTATION_STATE_ID = 26
+  MOONLESS_DANCE_SKILL_ID = 9397
+  MOONLESS_DANCE_STATE_ID = 503
   AUDIO_OVERLAY_KEY = :@research_mod_audio_overlay
   BATTLE_RECORD_MAX_LINES = 5000
   BATTLE_DIALOGUE_PAGE_SIZE = 100
@@ -1021,6 +1035,10 @@ end
 
   def self.debug_variable_entry_hint(entry_id)
     case entry_id
+    when CHEST_MONSTER_ICON_VARIABLE_ID
+      '研究修改器的怪物宝箱提示图标ID；默认1。负数或超过IconSet范围时不显示。'
+    when CHEST_ITEM_ICON_VARIABLE_ID
+      '研究修改器的物品宝箱提示图标ID；默认191。负数或超过IconSet范围时不显示。'
     when 1401
       '设为0可以重复拿戒指；设为1可以重复送戒指。'
     when 1402
@@ -1142,6 +1160,339 @@ end
     map.events.values.compact.sort_by { |event| event.id }
   end
 
+  def self.ensure_chest_hint_variables
+    return unless $game_system && $game_variables
+    return if $game_system.instance_variable_get(
+      CHEST_HINT_VARIABLES_INITIALIZED_KEY
+    ) == true
+
+    if $game_variables[CHEST_MONSTER_ICON_VARIABLE_ID].to_i == 0
+      $game_variables[CHEST_MONSTER_ICON_VARIABLE_ID] =
+        CHEST_MONSTER_ICON_DEFAULT
+    end
+    if $game_variables[CHEST_ITEM_ICON_VARIABLE_ID].to_i == 0
+      $game_variables[CHEST_ITEM_ICON_VARIABLE_ID] = CHEST_ITEM_ICON_DEFAULT
+    end
+    $game_system.instance_variable_set(
+      CHEST_HINT_VARIABLES_INITIALIZED_KEY, true
+    )
+  end
+
+  def self.chest_hint_enabled?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(CHEST_HINT_ENABLED_KEY) == true
+  end
+
+  def self.toggle_chest_hint
+    ensure_chest_hint_variables
+    enabled = !chest_hint_enabled?
+    $game_system.instance_variable_set(CHEST_HINT_ENABLED_KEY, enabled)
+    enabled
+  end
+
+  def self.chest_hint_icon_id(type)
+    ensure_chest_hint_variables
+    variable_id = type == :monster ? CHEST_MONSTER_ICON_VARIABLE_ID :
+                                     CHEST_ITEM_ICON_VARIABLE_ID
+    $game_variables[variable_id].to_i
+  end
+
+  def self.chest_event?(event)
+    return false unless event
+
+    map_id = event.respond_to?(:map_id) ? event.map_id : nil
+    if map_id.nil? && defined?($game_map) && $game_map
+      map_id = $game_map.map_id
+    end
+    return container_event?(map_id, event) if map_id
+
+    false
+  end
+
+  def self.chest_hint_type(event)
+    return nil unless chest_hint_enabled? && chest_event?(event)
+
+    map_id = event.respond_to?(:map_id) ? event.map_id : nil
+    map_id = $game_map.map_id if map_id.nil? && defined?($game_map) && $game_map
+    type = container_type(map_id, event)
+    return container_original_type(map_id, event) if type == :none
+
+    type == :monster || type == :item ? type : nil
+  rescue
+    nil
+  end
+
+  def self.container_event_data(event)
+    return nil unless event
+
+    data = if defined?(Game_Event) && event.is_a?(Game_Event)
+             event.instance_variable_get(:@event)
+           else
+             event
+           end
+    data && data.respond_to?(:pages) ? data : event
+  end
+
+  def self.container_event?(map_id, event)
+    event = container_event_data(event)
+    return false unless event && event.respond_to?(:pages)
+
+    event.pages.any? do |page|
+      graphic = page.respond_to?(:graphic) ? page.graphic : nil
+      next false unless graphic
+
+      name = graphic.character_name.to_s
+      next true if name.downcase.include?('chest') || name.include?('宝箱')
+
+      name.empty? && graphic.character_index.to_i == POT_CHARACTER_INDEX &&
+        graphic.tile_id.to_i == 0 && page.priority_type.to_i == 1
+    end
+  rescue
+    false
+  end
+
+  def self.container_active_page(map_id, event)
+    event = container_event_data(event)
+    return nil unless event && event.respond_to?(:pages)
+
+    page_index = active_event_page_index(map_id, event)
+    return nil if page_index.nil?
+
+    event.pages[page_index]
+  end
+
+  def self.container_event_entries(map_id)
+    map_events(map_id).select { |event| container_event?(map_id, event) }
+  end
+
+  def self.container_page_commands(map_id, event)
+    page = container_active_page(map_id, event)
+    page && page.respond_to?(:list) ? page.list.compact : []
+  end
+
+  def self.container_original_page(map_id, event)
+    event = container_event_data(event)
+    return nil unless event && event.respond_to?(:pages)
+
+    event.pages.find do |page|
+      graphic = page.respond_to?(:graphic) ? page.graphic : nil
+      next false unless graphic
+
+      name = graphic.character_name.to_s
+      name.downcase.include?('chest') || name.include?('宝箱') ||
+        (name.empty? && graphic.character_index.to_i == POT_CHARACTER_INDEX &&
+         graphic.tile_id.to_i == 0 && page.priority_type.to_i == 1)
+    end
+  end
+
+  def self.container_opened?(map_id, event)
+    event = container_event_data(event)
+    return false unless event && event.respond_to?(:pages)
+
+    active_index = active_event_page_index(map_id, event)
+    original_page = container_original_page(map_id, event)
+    original_index = original_page ? event.pages.index(original_page) : nil
+    !active_index.nil? && !original_index.nil? && active_index > original_index
+  end
+
+  def self.container_type(map_id, event)
+    return :none if container_opened?(map_id, event)
+
+    codes = container_page_commands(map_id, event).map { |command| command.code }
+    return :monster if codes.include?(301)
+    return :item unless (codes & [125, 126, 127, 128]).empty?
+
+    :unknown
+  rescue
+    :unknown
+  end
+
+  def self.container_original_type(map_id, event)
+    page = container_original_page(map_id, event)
+    codes = page ? page.list.to_a.map { |command| command.code } : []
+    return :monster if codes.include?(301)
+    return :item unless (codes & [125, 126, 127, 128]).empty?
+
+    :unknown
+  rescue
+    :unknown
+  end
+
+  def self.container_hint_label(map_id, event)
+    return '' unless chest_hint_enabled?
+
+    case container_type(map_id, event)
+    when :monster then ' [怪物]'
+    when :item then ' [物品]'
+    when :none then ' [无]'
+    else ''
+    end
+  end
+
+  def self.container_static_rewards(map_id, event)
+    commands = container_page_commands(map_id, event)
+    return nil if commands.empty? || container_type(map_id, event) != :item
+
+    rewards = []
+    self_switches = []
+    commands.each do |command|
+      code = command.code
+      parameters = command.parameters || []
+      case code
+      when 0, 101, 115, 401, 205, 230, 250, 411, 412, 505
+        next
+      when 111
+        # Only accept the standard script branch used for chest lock checks.
+        return nil unless parameters[0].to_i == 12 &&
+                          parameters[1].to_s =~ /unlock_level\s*[<>=!]/
+      when 123
+        return nil unless parameters[1].to_i == 0
+        self_switches << parameters[0].to_s
+      when 125
+        return nil unless parameters[0].to_i == 0 && parameters[1].to_i == 0
+        rewards << [:gold, parameters[2].to_i]
+      when 126, 127, 128
+        return nil unless parameters[1].to_i == 0 && parameters[2].to_i == 0
+        type = code == 126 ? :item : (code == 127 ? :weapon : :armor)
+        rewards << [type, parameters[0].to_i, parameters[3].to_i]
+      else
+        return nil
+      end
+    end
+    return nil if rewards.empty? || self_switches.empty? ||
+                  rewards.any? { |reward| reward.last.to_i <= 0 }
+
+    { :rewards => rewards, :self_switches => self_switches.uniq,
+      :locked => commands.any? { |command| command.code == 111 } }
+  rescue
+    nil
+  end
+
+  def self.container_force_openable?(map_id, event)
+    !container_static_rewards(map_id, event).nil?
+  end
+
+  def self.container_normal_batch_openable?(map_id, event)
+    data = container_static_rewards(map_id, event)
+    data && !data[:locked]
+  end
+
+  def self.container_batch_available?
+    chest_hint_enabled?
+  end
+
+  def self.container_reward_summary_lines(rewards)
+    totals = Hash.new(0)
+    Array(rewards).each do |reward|
+      key = reward[0] == :gold ? [:gold, 0] : [reward[0], reward[1]]
+      totals[key] += reward[0] == :gold ? reward[1].to_i : reward[2].to_i
+    end
+    return ['没有获得物品。'] if totals.empty?
+
+    order = { :gold => 0, :item => 1, :weapon => 2, :armor => 3 }
+    totals.sort_by { |key, _amount| [order[key[0]] || 9, key[1]] }.map do |key, amount|
+      type, id = key
+      case type
+      when :gold
+        format('金币 x%d', amount)
+      when :item
+        format('物品：%s x%d', short_item_name($data_items[id].name), amount)
+      when :weapon
+        format('武器：%s x%d', short_item_name($data_weapons[id].name), amount)
+      when :armor
+        format('防具：%s x%d', short_item_name($data_armors[id].name), amount)
+      end
+    end.compact
+  rescue
+    ['获得物品列表无法读取。']
+  end
+
+  def self.force_open_container(map_id, event, reward_log = nil)
+    data = container_static_rewards(map_id, event)
+    return false unless data
+
+    data[:rewards].each do |reward|
+      reward_log << reward if reward_log
+      case reward[0]
+      when :gold
+        $game_party.gain_gold(reward[1])
+      when :item
+        $game_party.gain_item($data_items[reward[1]], reward[2])
+      when :weapon
+        $game_party.gain_item($data_weapons[reward[1]], reward[2])
+      when :armor
+        $game_party.gain_item($data_armors[reward[1]], reward[2])
+      end
+    end
+    data[:self_switches].each do |key|
+      set_self_switch(map_id, event.id, key, true)
+    end
+    $game_map.refresh if current_map_id?(map_id)
+    true
+  rescue
+    false
+  end
+
+  def self.container_access_position(event)
+    return nil unless event && current_map_id?($game_map.map_id)
+
+    [[event.x, event.y - 1, 2], [event.x + 1, event.y, 4],
+     [event.x, event.y + 1, 8], [event.x - 1, event.y, 6]].find do |x, y, direction|
+      $game_map.valid?(x, y) && $game_map.events_xy_nt(x, y).empty? &&
+        [2, 4, 6, 8].any? { |pass_direction| $game_map.passable?(x, y, pass_direction) }
+    end
+  rescue
+    nil
+  end
+
+  def self.reserve_container_teleport(event, open_after_transfer = false)
+    position = container_access_position(event)
+    return false unless position
+
+    x, y, direction = position
+    $game_temp.instance_variable_set(
+      CONTAINER_PENDING_OPEN_KEY,
+      open_after_transfer ? {
+        :map_id => $game_map.map_id, :event_id => event.id,
+        :mode => open_after_transfer == :force ? :force : :normal
+      } : nil
+    )
+    $game_player.reserve_transfer($game_map.map_id, x, y, direction)
+    $game_temp.fade_type = 0 if $game_temp.respond_to?(:fade_type=)
+    true
+  end
+
+  def self.start_pending_container_event
+    pending = $game_temp.instance_variable_get(CONTAINER_PENDING_OPEN_KEY)
+    $game_temp.instance_variable_set(CONTAINER_PENDING_OPEN_KEY, nil)
+    return unless pending && pending[:map_id] == $game_map.map_id
+
+    event = $game_map.events[pending[:event_id]]
+    return unless event && !event.empty?
+
+    if pending[:mode] == :force
+      rewards = []
+      return unless force_open_container($game_map.map_id, event, rewards)
+
+      show_container_force_rewards(rewards)
+    else
+      event.start
+    end
+  rescue
+    $game_temp.instance_variable_set(CONTAINER_PENDING_OPEN_KEY, nil)
+  end
+
+  def self.show_container_force_rewards(rewards)
+    return unless defined?($game_message) && $game_message
+
+    $game_message.add('强制打开：获得以下物品')
+    container_reward_summary_lines(rewards).each do |line|
+      $game_message.add(line)
+    end
+  rescue
+  end
+
   def self.teleport_target_valid?(map_id, x, y)
     map = map_data(map_id)
     return false unless map && map.respond_to?(:width) && map.respond_to?(:height)
@@ -1162,10 +1513,7 @@ end
   end
 
   def self.harpy_feather_modified_usable?
-    return false unless defined?(NWConst::Sw::WARP_BAN)
-    return false if $game_switches[NWConst::Sw::WARP_BAN]
-
-    !harpy_feather_all_places.empty?
+    defined?(Scene_Warp) && !harpy_feather_all_places.empty?
   end
 
   def self.harpy_feather_all_places_active?
@@ -1184,52 +1532,58 @@ end
     true
   end
 
-  def self.teleport_slots
-    slots = $game_system.instance_variable_get(TELEPORT_SLOTS_KEY)
+  def self.custom_teleport_points
+    slots = $game_system.instance_variable_get(CUSTOM_TELEPORT_POINTS_KEY)
+    if !slots.is_a?(Array)
+      legacy_slots = $game_system.instance_variable_get(
+        CUSTOM_TELEPORT_POINTS_LEGACY_KEY
+      )
+      slots = legacy_slots if legacy_slots.is_a?(Array)
+    end
     unless slots.is_a?(Array)
       slots = []
-      $game_system.instance_variable_set(TELEPORT_SLOTS_KEY, slots)
     end
-    slots.fill(nil, slots.length...TELEPORT_SLOT_COUNT)
-    slots.slice!(TELEPORT_SLOT_COUNT, slots.length) if slots.length > TELEPORT_SLOT_COUNT
+    $game_system.instance_variable_set(CUSTOM_TELEPORT_POINTS_KEY, slots)
+    slots.fill(nil, slots.length...CUSTOM_TELEPORT_POINT_COUNT)
+    slots.slice!(CUSTOM_TELEPORT_POINT_COUNT, slots.length) if slots.length > CUSTOM_TELEPORT_POINT_COUNT
     slots
   end
 
-  def self.teleport_slot(index)
-    teleport_slots[index.to_i]
+  def self.custom_teleport_point(index)
+    custom_teleport_points[index.to_i]
   end
 
-  def self.teleport_slot_valid?(slot)
-    return false unless slot.is_a?(Hash)
+  def self.custom_teleport_point_valid?(point)
+    return false unless point.is_a?(Hash)
 
-    teleport_target_valid?(slot[:map_id], slot[:x], slot[:y])
+    teleport_target_valid?(point[:map_id], point[:x], point[:y])
   end
 
-  def self.save_current_teleport_slot(index)
-    teleport_slots[index.to_i] = {
+  def self.save_current_custom_teleport_point(index)
+    custom_teleport_points[index.to_i] = {
       :map_id => $game_map.map_id,
       :x => $game_player.x,
       :y => $game_player.y
     }
   end
 
-  def self.clear_teleport_slot(index)
-    teleport_slots[index.to_i] = nil
+  def self.clear_custom_teleport_point(index)
+    custom_teleport_points[index.to_i] = nil
   end
 
-  def self.reserve_teleport_slot(index)
-    slot = teleport_slot(index)
-    return false unless teleport_slot_valid?(slot)
+  def self.reserve_custom_teleport_point(index)
+    point = custom_teleport_point(index)
+    return false unless custom_teleport_point_valid?(point)
 
-    reserve_teleport(slot[:map_id], slot[:x], slot[:y])
+    reserve_teleport(point[:map_id], point[:x], point[:y])
   end
 
-  def self.teleport_slot_text(index, slot = teleport_slot(index))
-    return format('挡位 %02d：空', index.to_i + 1) unless slot.is_a?(Hash)
+  def self.custom_teleport_point_text(index, point = custom_teleport_point(index))
+    return format('点位 %02d：空', index.to_i + 1) unless point.is_a?(Hash)
 
-    format('挡位 %02d：地图 %04d「%s」 X=%d Y=%d', index.to_i + 1,
-           slot[:map_id].to_i, map_name(slot[:map_id].to_i),
-           slot[:x].to_i, slot[:y].to_i)
+    format('点位 %02d：地图 %04d「%s」 X=%d Y=%d', index.to_i + 1,
+           point[:map_id].to_i, map_name(point[:map_id].to_i),
+           point[:x].to_i, point[:y].to_i)
   end
 
   def self.event_display_name(event)
@@ -1364,6 +1718,29 @@ end
       end
     end
     data
+  rescue
+    nil
+  end
+
+  def self.event_coordinate_tile_id(map_id, event)
+    return nil unless event
+
+    if current_map_id?(map_id)
+      [2, 1, 0].each do |z|
+        tile_id = $game_map.tile_id(event.x, event.y, z).to_i
+        return tile_id if tile_id > 0
+      end
+      return nil
+    end
+
+    map = map_data(map_id)
+    return nil unless map && map.respond_to?(:data)
+
+    [2, 1, 0].each do |z|
+      tile_id = map.data[event.x, event.y, z].to_i
+      return tile_id if tile_id > 0
+    end
+    nil
   rescue
     nil
   end
@@ -5403,6 +5780,7 @@ end
 class Window_ResearchModBattleEditMain < Window_ResearchModBattleEditBase
   def make_command_list
     add_command('异常状态', :state)
+    add_command('Buff', :buff)
     add_command('获取敌人物品', :enemy_items)
     add_command('返回', :cancel)
   end
@@ -5413,12 +5791,14 @@ class Window_ResearchModBattleEditMain < Window_ResearchModBattleEditBase
     text = case current_symbol
            when :state
              '修改当前战斗中敌我成员的异常状态，不消耗回合。'
+           when :buff
+             '赋予当前战斗中敌我成员的增益效果，不消耗回合。'
            when :enemy_items
              '选择当前战斗中的敌人，然后查看并获取其掉落和可偷物品。'
            else
              '返回战斗队伍指令菜单。'
            end
-    help_window.set_text(text)
+    help_window.set_text(text.gsub(92.chr + 'n', 10.chr))
   end
 end
 
@@ -5649,16 +6029,42 @@ class Window_ResearchModBattleEditTemptationAction < Window_ResearchModBattleEdi
   end
 end
 
+class Window_ResearchModBattleEditBuff < Window_ResearchModBattleEditBase
+  def make_command_list
+    enabled = $data_skills[ResearchMod::MOONLESS_DANCE_SKILL_ID] &&
+              $data_states[ResearchMod::MOONLESS_DANCE_STATE_ID]
+    add_command('月無の舞', :moonless_dance, enabled)
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    text = current_symbol == :moonless_dance ?
+      '赋予月無の舞的Buff（技能ID 9397，对应状态ID 503）。效果为全体MP、SP消耗为0。' :
+      '返回战斗修改菜单。'
+    help_window.set_text(text.gsub(92.chr + 'n', 10.chr))
+  end
+end
+
 class Window_ResearchModBattleEditTarget < Window_ResearchModBattleEditBase
   attr_reader :action
+  attr_reader :state_id
+  attr_reader :operation_name
 
   def initialize(help_window)
     @action = :add
+    @state_id = ResearchMod::TEMPTATION_STATE_ID
+    @operation_name = '赋予诱惑'
     super(help_window)
   end
 
-  def setup(action)
+  def setup(action, state_id = ResearchMod::TEMPTATION_STATE_ID,
+            operation_name = nil)
     @action = action
+    @state_id = state_id
+    @operation_name = operation_name ||
+      (action == :add ? '赋予诱惑' : '解除诱惑')
     refresh
     open_window
   end
@@ -5680,17 +6086,21 @@ class Window_ResearchModBattleEditTarget < Window_ResearchModBattleEditBase
   end
 
   def add_battler_command(side, battler)
-    marker = battler.state?(ResearchMod::TEMPTATION_STATE_ID) ? '【诱惑】' : ''
+    state = $data_states[@state_id]
+    marker = battler.state?(@state_id) && state ?
+      format('【%s】', state.name) : ''
     add_target_command(format('%s：%s%s', side, battler.name, marker), [battler])
   end
 
   def target_enabled?(targets)
     return false if targets.empty?
-    return false if @action == :add && ResearchMod.temptation_immunity?
+    return false if @action == :add &&
+                    @state_id == ResearchMod::TEMPTATION_STATE_ID &&
+                    ResearchMod.temptation_immunity?
 
     return true if @action == :add
 
-    targets.any? { |battler| battler.state?(ResearchMod::TEMPTATION_STATE_ID) }
+    targets.any? { |battler| battler.state?(@state_id) }
   end
 
   def target_label
@@ -5702,11 +6112,10 @@ class Window_ResearchModBattleEditTarget < Window_ResearchModBattleEditBase
     return unless help_window
 
     if current_symbol == :select
-      action_text = @action == :add ? '赋予诱惑' : '解除诱惑'
-      help_window.set_text(format('%s：%s。确认后进入最终确认。', action_text,
+      help_window.set_text(format('%s：%s。确认后进入最终确认。', @operation_name,
                                   target_label))
     else
-      help_window.set_text('返回诱惑操作菜单。')
+      help_window.set_text('返回上一级菜单。')
     end
   end
 end
@@ -5714,12 +6123,18 @@ end
 class Window_ResearchModBattleEditConfirm < Window_ResearchModBattleEditBase
   def initialize(help_window)
     @action = :add
+    @state_id = ResearchMod::TEMPTATION_STATE_ID
+    @operation_name = '赋予诱惑'
     @target_label = ''
     super(help_window)
   end
 
-  def setup(action, target_label)
+  def setup(action, target_label,
+            state_id = ResearchMod::TEMPTATION_STATE_ID, operation_name = nil)
     @action = action
+    @state_id = state_id
+    @operation_name = operation_name ||
+      (action == :add ? '赋予诱惑' : '解除诱惑')
     @target_label = target_label
     refresh
     open_window
@@ -5733,8 +6148,8 @@ class Window_ResearchModBattleEditConfirm < Window_ResearchModBattleEditBase
   def update_help
     return unless help_window
 
-    action_text = @action == :add ? '赋予诱惑' : '解除诱惑'
-    help_window.set_text(format('目标：%s　操作：%s。', @target_label, action_text))
+    help_window.set_text(format('目标：%s　操作：%s。', @target_label,
+                                @operation_name))
   end
 end
 
@@ -5970,6 +6385,9 @@ class Scene_Battle < Scene_Base
       :state, method(:open_research_mod_battle_edit_states)
     )
     @research_mod_battle_edit_main_window.set_handler(
+      :buff, method(:open_research_mod_battle_edit_buffs)
+    )
+    @research_mod_battle_edit_main_window.set_handler(
       :enemy_items, method(:open_research_mod_battle_edit_enemy_items)
     )
     @research_mod_battle_edit_main_window.set_handler(
@@ -5995,6 +6413,14 @@ class Scene_Battle < Scene_Base
     )
     @research_mod_battle_edit_action_window.set_handler(
       :cancel, method(:close_research_mod_battle_edit_temptation)
+    )
+    @research_mod_battle_edit_buff_window =
+      Window_ResearchModBattleEditBuff.new(@research_mod_battle_edit_help_window)
+    @research_mod_battle_edit_buff_window.set_handler(
+      :moonless_dance, method(:open_research_mod_battle_edit_moonless_dance_targets)
+    )
+    @research_mod_battle_edit_buff_window.set_handler(
+      :cancel, method(:close_research_mod_battle_edit_buffs)
     )
     @research_mod_battle_edit_target_window =
       Window_ResearchModBattleEditTarget.new(@research_mod_battle_edit_help_window)
@@ -7163,6 +7589,24 @@ class Scene_Battle < Scene_Base
     @research_mod_battle_edit_main_window.open_window
   end
 
+  def open_research_mod_battle_edit_buffs
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_main_window)
+    @research_mod_battle_edit_buff_window.refresh
+    @research_mod_battle_edit_buff_window.open_window
+  end
+
+  def close_research_mod_battle_edit_buffs
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_buff_window)
+    @research_mod_battle_edit_main_window.open_window
+  end
+
+  def open_research_mod_battle_edit_moonless_dance_targets
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_buff_window)
+    open_research_mod_battle_edit_targets(
+      :add, ResearchMod::MOONLESS_DANCE_STATE_ID, '赋予月無の舞'
+    )
+  end
+
   def open_research_mod_battle_edit_temptation
     hide_research_mod_battle_edit_window(@research_mod_battle_edit_state_window)
     @research_mod_battle_edit_action_window.refresh
@@ -7182,15 +7626,23 @@ class Scene_Battle < Scene_Base
     open_research_mod_battle_edit_targets(:remove)
   end
 
-  def open_research_mod_battle_edit_targets(action)
+  def open_research_mod_battle_edit_targets(action,
+                                             state_id = ResearchMod::TEMPTATION_STATE_ID,
+                                             operation_name = nil)
     hide_research_mod_battle_edit_window(@research_mod_battle_edit_action_window)
-    @research_mod_battle_edit_target_window.setup(action)
+    @research_mod_battle_edit_target_window.setup(action, state_id, operation_name)
   end
 
   def close_research_mod_battle_edit_targets
     hide_research_mod_battle_edit_window(@research_mod_battle_edit_target_window)
-    @research_mod_battle_edit_action_window.refresh
-    @research_mod_battle_edit_action_window.open_window
+    if @research_mod_battle_edit_target_window.state_id ==
+       ResearchMod::MOONLESS_DANCE_STATE_ID
+      @research_mod_battle_edit_buff_window.refresh
+      @research_mod_battle_edit_buff_window.open_window
+    else
+      @research_mod_battle_edit_action_window.refresh
+      @research_mod_battle_edit_action_window.open_window
+    end
   end
 
   def confirm_research_mod_battle_edit_target
@@ -7202,11 +7654,16 @@ class Scene_Battle < Scene_Base
     end
 
     @research_mod_battle_edit_action = @research_mod_battle_edit_target_window.action
+    @research_mod_battle_edit_state_id = @research_mod_battle_edit_target_window.state_id
+    @research_mod_battle_edit_operation_name =
+      @research_mod_battle_edit_target_window.operation_name
     @research_mod_battle_edit_targets = targets
     label = @research_mod_battle_edit_target_window.target_label
     hide_research_mod_battle_edit_window(@research_mod_battle_edit_target_window)
     @research_mod_battle_edit_confirm_window.setup(
-      @research_mod_battle_edit_action, label
+      @research_mod_battle_edit_action, label,
+      @research_mod_battle_edit_state_id,
+      @research_mod_battle_edit_operation_name
     )
   end
 
@@ -7223,18 +7680,22 @@ class Scene_Battle < Scene_Base
     targets.each do |battler|
       result = if @research_mod_battle_edit_action == :add
                  ResearchMod.force_add_battle_state(
-                   battler, ResearchMod::TEMPTATION_STATE_ID
+                   battler, @research_mod_battle_edit_state_id
                  )
                else
                  ResearchMod.force_remove_battle_state(
-                   battler, ResearchMod::TEMPTATION_STATE_ID
+                   battler, @research_mod_battle_edit_state_id
                  )
                end
       changed += 1 if result
     end
     hide_research_mod_battle_edit_window(@research_mod_battle_edit_confirm_window)
-    @research_mod_battle_edit_target_window.setup(@research_mod_battle_edit_action)
+    @research_mod_battle_edit_target_window.setup(
+      @research_mod_battle_edit_action, @research_mod_battle_edit_state_id,
+      @research_mod_battle_edit_operation_name
+    )
     if changed > 0
+      refresh_status if respond_to?(:refresh_status)
       @research_mod_battle_edit_help_window.set_text(
         format('操作完成：已修改 %d 名战斗成员。', changed)
       )
@@ -7398,6 +7859,7 @@ class Scene_Battle < Scene_Base
                @research_mod_battle_edit_main_window,
                @research_mod_battle_edit_state_window,
                @research_mod_battle_edit_action_window,
+               @research_mod_battle_edit_buff_window,
                @research_mod_battle_edit_target_window,
                @research_mod_battle_edit_enemy_item_target_window,
                @research_mod_battle_edit_enemy_item_list_window,
@@ -7432,6 +7894,7 @@ class Scene_Battle < Scene_Base
     @research_mod_battle_edit_main_window = nil
     @research_mod_battle_edit_state_window = nil
     @research_mod_battle_edit_action_window = nil
+    @research_mod_battle_edit_buff_window = nil
     @research_mod_battle_edit_target_window = nil
     @research_mod_battle_edit_enemy_item_target_window = nil
     @research_mod_battle_edit_enemy_item_list_window = nil
@@ -7439,6 +7902,8 @@ class Scene_Battle < Scene_Base
     @research_mod_battle_edit_enemy_item_target_entries = nil
     @research_mod_battle_edit_enemy_item_list_index = nil
     @research_mod_battle_edit_confirm_window = nil
+    @research_mod_battle_edit_state_id = nil
+    @research_mod_battle_edit_operation_name = nil
     @research_mod_battle_edit_talk_actor_window = nil
     @research_mod_battle_edit_talk_enemy_window = nil
     @research_mod_battle_edit_talk_list_window = nil
@@ -7587,8 +8052,10 @@ class Window_ResearchModCommand < Window_Command
     add_command('哈比羽毛', :harpy_feather_original, ResearchMod.harpy_feather_original_usable?)
     add_command('哈比羽毛改', :harpy_feather_modified, ResearchMod.harpy_feather_modified_usable?)
     add_command('引导之线', :guiding_thread)
+    add_command('当前地图宝箱管理', :current_map_containers)
+    add_command('宝箱内容提示：' + (ResearchMod.chest_hint_enabled? ? '已开启' : '已关闭'), :chest_hint)
     add_command('任意地图传送', :teleport)
-    add_command('传送坐标记录', :teleport_slots)
+    add_command('自定义传送点', :custom_teleport_points)
     add_command('地图与事件检查', :map_inspector)
     add_command('---------- 当前角色修改 ----------', :separator, false)
     add_command('切换当前角色：' + @actor.name, :actor)
@@ -7659,42 +8126,52 @@ class Window_ResearchModCommand < Window_Command
 
     text = case current_symbol
            when :recruit_all
-             '此操作会影响全局角色数据，可能影响全局成就判定。建议提前备份存档，再执行。'
+             '此操作会影响全局角色数据，可能影响全局成就判定。' + 10.chr + '建议提前备份存档，再执行。'
            when :set_all_love
-             '为所有有名称的角色统一设置好感度。按确定后输入0～9999999，默认30000；此操作会影响全局角色数据，建议提前备份存档。'
+             '为所有有名称的角色统一设置好感度。' + 10.chr + '按确定后输入0～9999999，默认30000；此操作会影响全局角色数据，建议提前备份存档。'
            when :party_member_max
-             '设置最终队伍编成人数上限，允许8～99人。内部变量56保存的是超过基础8人的追加人数。'
+             '设置最终队伍编成人数上限，允许8～99人。' + 10.chr + '内部变量56保存的是超过基础8人的追加人数。'
            when :map_follower_count
-             '设置地图上队首玩家之后的跟随角色数量。0表示不显示跟随者，最多99；数量过高可能明显降低地图性能。'
+             '设置地图上队首玩家之后的跟随角色数量。' + 10.chr + '0表示不显示跟随者，最多99；' + 10.chr + '数量过高可能明显降低地图性能。'
+           when :current_map_containers
+             '列出当前地图中生效的宝箱和壶。' + 10.chr + '单个打开会执行原事件；' + 10.chr + '批量操作只处理安全可解析的静态物品容器。'
+           when :chest_hint
+             '在能直接判断内容的未开启宝箱或壶上显示提示图标。' + 10.chr +
+               format('怪物图标：变量%d=%d；' + 10.chr + '物品图标：变量%d=%d。',
+                      ResearchMod::CHEST_MONSTER_ICON_VARIABLE_ID,
+                      ResearchMod::CHEST_MONSTER_ICON_DEFAULT,
+                      ResearchMod::CHEST_ITEM_ICON_VARIABLE_ID,
+                      ResearchMod::CHEST_ITEM_ICON_DEFAULT) + 10.chr +
+               '可在“开关与变量修改”中改图标ID；动态容器不显示。'
            when :party_edit_actor_id
              ResearchMod::PARTY_EDIT_ACTOR_ID_HELP_TEXT
            when :actor_encyclopedia
-             '输入角色起始ID后，每批加载最多100名有名称角色；支持上一批、下一批和重新输入起始ID。'
+             '输入角色起始ID后，每批加载最多100名有名称角色；' + 10.chr + '支持上一批、下一批和重新输入起始ID。'
            when :guiding_thread
-             '执行物品「導きの糸」的原版效果，从当前迷宫返回地上；不会要求持有，也不会消耗物品。'
+             '执行物品「引导之线」的原版效果，从当前迷宫返回地上；' + 10.chr + '不会要求持有，也不会消耗物品。'
            when :gain_all_cds
-             '获得物品ID 1801～1832的全部CD；已经持有的CD不会重复增加。'
+             '获得物品ID 1801～1832的全部CD；' + 10.chr + '已经持有的CD不会重复增加。'
            when :harpy_feather_original
              '打开原版哈比之羽的地点列表，遵守原版地点解锁和传送禁止条件。' + 10.chr +
              '研究菜单不会消耗物品。'
            when :harpy_feather_modified
              '显示哈比之羽表中的全部有效地点，包括地上、天界、魔界和混沌。' + 10.chr +
-             '忽略地点解锁条件，但仍遵守原版传送禁止条件。' + 10.chr +
+             '忽略地点解锁条件和原版传送禁止条件。' + 10.chr +
              '不会消耗物品。'
            when :reflection_meeting
              ResearchMod::REFLECTION_MEETING_HELP_TEXT
            when :all_dialogue
-             '开启后，可浏览角色的默认、戒指及队友相关对话；实际对话判定也会无视角色是否在队伍或候补。\n对话浏览本身不执行事件效果，但无视入队条件可能改变实际事件的对话分支。'
+             '开启后，可浏览角色的默认、戒指及队友相关对话；' + 10.chr + '实际对话判定也会无视角色是否在队伍或候补。' + 10.chr + '对话浏览本身不执行事件效果，' + 10.chr + '但无视入队条件可能改变实际事件的对话分支。'
            when :steal_success
-             '开启后，盗む（偷窃）相关判定必定成功，包括可偷取物品和成功率检查。'
+             '开启后，盗む（偷窃）相关判定必定成功，' + 10.chr + '包括可偷取物品和成功率检查。'
            when :milk_success
-             '开启后，ミルク获取判定必定成功，不再出现搾れなかった的失败结果。'
+             '开启后，ミルク获取判定必定成功，' + 10.chr + '不再出现搾れなかった的失败结果。'
            when :drop_success
-             '开启后，敌人的物品掉落率视为必定成功，符合掉落条件的物品会掉落。'
+             '开启后，敌人的物品掉落率视为必定成功，' + 10.chr + '符合掉落条件的物品会掉落。'
            when :temptation_ignore_hp
              '开启后，敌人诱惑事件不再检查当前HP是否低于原版触发条件。\n测试时必须关闭“敌人诱惑事件禁止”，否则禁止开关优先，诱惑仍不会触发。'
            when :temptation_disabled
-             '开启后，完全跳过敌人诱惑公共事件；无论是否装备香水、敌人HP多少都不会触发。普通敌方对话仍保留。'
+             '开启后，完全跳过敌人诱惑公共事件；' + 10.chr + '无论是否装备香水、敌人HP多少都不会触发。' + 10.chr + '普通敌方对话仍保留。'
            when :temptation_immunity
              '开启后，敌我全员无法获得诱惑状态，并立即解除当前已有的诱惑。\n建议同时开启“敌人诱惑事件禁止”，两者属于不同机制。'
            when :lose_event_skip
@@ -7702,38 +8179,38 @@ class Window_ResearchModCommand < Window_Command
            when :sure_hit_kill
              '开启后，我方攻击必中，并尽量将命中目标直接判定为必杀效果。'
            when :through_mode
-             '开启后，玩家可以穿过地图上的普通阻挡。部分特殊事件或区域仍可能限制移动。'
+             '开启后，玩家可以穿过地图上的普通阻挡。' + 10.chr + '部分特殊事件或区域仍可能限制移动。'
            when :no_random_encounter
-             '开启后，地图步行不会触发随机遇敌。剧情事件战斗、地图接触事件和“自定义战斗”不受影响。' + 10.chr +
-               '本功能直接阻止随机遇敌判定，实现方式与原版禁止遇敌不同；不会修改原版 encounter_disabled 状态。'
+             '开启后，地图步行不会触发随机遇敌。' + 10.chr + '剧情事件战斗、地图接触事件和“自定义战斗”不受影响。' + 10.chr +
+               '本功能直接阻止随机遇敌判定，' + 10.chr + '实现方式与原版禁止遇敌不同；不会修改原版 encounter_disabled 状态。'
            when :prevent_luca_front
              '开启后，尽量阻止事件把鲁卡强制移动到队伍第一位。'
            when :follow_success
              '开启后，战斗结束后的敌人入队判定视为成功。'
            when :battle_enemy_status
-             '开启后，战斗菜单显示敌人的能力、状态、掉落物、牛奶、可偷物品、可偷食材、可偷素材、可偷内裤和图片信息。'
+             '开启后，战斗菜单显示敌人的能力、状态、掉落物、牛奶、可偷物品、' + 10.chr + '可偷食材、可偷素材、可偷内裤和图片信息。'
            when :battle_party_status
-             '开启后，战斗菜单显示我方队员的等级、HP、MP、职业、种族和状态。'
+             '开启后，战斗菜单显示我方队员的等级、' + 10.chr + 'HP、MP、职业、种族和状态。'
            when :battle_cutin_view
-             '开启后，战斗菜单增加Cut-in查看，可预览我方和敌方配置的技能图片。'
+             '开启后，战斗菜单增加Cut-in查看，' + 10.chr + '可预览我方和敌方配置的技能图片。'
            when :battle_record
-             '开启后，记录本场战斗的技能、伤害、恢复和状态文字，可从战斗菜单查看。'
+             '开启后，记录本场战斗的技能、' + 10.chr + '伤害、恢复和状态文字，可从战斗菜单查看。'
            when :manual_enemy_dialogue
-             '开启后，可在战斗菜单查看双方技能台词、效果反应，并手动组合释放者与目标对白。'
+             '开启后，可在战斗菜单查看双方技能台词、' + 10.chr + '效果反应，并手动组合释放者与目标对白。'
            when :battle_editor
-             '开启后，战斗队伍指令增加“战斗修改”，增加如强制赋予或解除敵我成员的诱惑状态等功能'
+             '开启后，战斗队伍指令增加“战斗修改”，' + 10.chr + '增加如强制赋予或解除敵我成员的诱惑状态等功能'
            when :audio_overlay
-             '开启后，地图和战斗右上角持续显示当前BGM与BGS文件名；音乐变化时自动刷新。'
+             '开启后，地图和战斗右上角持续显示当前BGM与BGS文件名；' + 10.chr + '音乐变化时自动刷新。'
            when :value_editor
              '可修改金钱、奖牌、各类点数、BF奖励进度、BF图鉴统计和累计奖牌兑换数。' + 10.chr +
                '部分统计可能影响图鉴、成就或剧情，修改前建议备份存档。'
            when :experimental
              '设置尚处于实验阶段的功能。建议使用独立测试存档。'
             when :stuck_help
-              '处理两个已知剧情卡关。圣山：开关2479改为OFF即可下山；建议重新关闭原版不遇敌，关闭开关100和2116。' + 10.chr +
-                '新人类宴会：变量1150改为17。执行前建议先保存独立存档。'
+              '处理两个已知剧情卡关。' + 10.chr + '圣山：开关2479改为OFF即可下山；' + 10.chr +
+                '建议重新关闭原版不遇敌，关闭开关100和2116。' + 10.chr + '新人类宴会：变量1150改为17。执行前建议先保存独立存档。'
             when :persona_dialogue
-             '开启后，魔王城对话中的形态变化会无视原事件条件。建议只在需要调试时开启。'
+             '开启后，魔王城对话中的形态变化会无视原事件条件。' + 10.chr + '建议只在需要调试时开启。'
            when :separator
              '使用上下键移动；分割线不可操作。'
            when :actor
@@ -9320,6 +9797,10 @@ module ResearchModEventThumbnailWindow
         return
       end
     end
+    if ResearchMod.container_event?(@map_id, event)
+      tile_id = ResearchMod.event_coordinate_tile_id(@map_id, event)
+      return if tile_id && draw_event_tile_thumbnail(tile_id, x, y, enabled)
+    end
     draw_icon(EVENT_FALLBACK_ICON, x + 4, y + 4, enabled)
   end
 
@@ -9429,9 +9910,9 @@ class Window_ResearchModTeleportEventList < Window_Command
   end
 end
 
-class Window_ResearchModTeleportSlotList < Window_Command
+class Window_ResearchModCustomTeleportPointList < Window_Command
   def initialize(help_window)
-    @slot_help_window = help_window
+    @custom_teleport_point_help_window = help_window
     super(0, 0)
     self.help_window = help_window
     update_help
@@ -9442,12 +9923,12 @@ class Window_ResearchModTeleportSlotList < Window_Command
   end
 
   def window_height
-    Graphics.height - @slot_help_window.height
+    Graphics.height - @custom_teleport_point_help_window.height
   end
 
   def make_command_list
-    ResearchMod::TELEPORT_SLOT_COUNT.times do |index|
-      add_command(ResearchMod.teleport_slot_text(index), :select, true, index)
+    ResearchMod::CUSTOM_TELEPORT_POINT_COUNT.times do |index|
+      add_command(ResearchMod.custom_teleport_point_text(index), :select, true, index)
     end
     add_command('返回', :cancel)
   end
@@ -9459,15 +9940,15 @@ class Window_ResearchModTeleportSlotList < Window_Command
                           $game_map.map_id, ResearchMod.map_name($game_map.map_id),
                           $game_player.x, $game_player.y)
     if current_symbol == :select
-      slot = ResearchMod.teleport_slot(current_ext)
-      slot_text = if slot
-                    valid_text = ResearchMod.teleport_slot_valid?(slot) ? '有效' : '无效'
+      point = ResearchMod.custom_teleport_point(current_ext)
+      point_text = if point
+                    valid_text = ResearchMod.custom_teleport_point_valid?(point) ? '有效' : '无效'
                     format('所选%s　状态：%s',
-                           ResearchMod.teleport_slot_text(current_ext, slot), valid_text)
+                           ResearchMod.custom_teleport_point_text(current_ext, point), valid_text)
                   else
-                    format('所选挡位 %02d 为空。', current_ext + 1)
+                    format('所选点位 %02d 为空。', current_ext + 1)
                   end
-      text = current_text + "\n" + slot_text + "\n确认后可记录、传送或清除。"
+      text = current_text + "\n" + point_text + "\n确认后可记录、传送或清除。"
     else
       text = current_text + "\n返回研究修改器。"
     end
@@ -9475,9 +9956,9 @@ class Window_ResearchModTeleportSlotList < Window_Command
   end
 end
 
-class Window_ResearchModTeleportSlotAction < Window_Command
-  def initialize(slot_index, help_window)
-    @slot_index = slot_index
+class Window_ResearchModCustomTeleportPointAction < Window_Command
+  def initialize(point_index, help_window)
+    @point_index = point_index
     super(0, 0)
     self.help_window = help_window
     self.x = (Graphics.width - width) / 2
@@ -9495,11 +9976,11 @@ class Window_ResearchModTeleportSlotAction < Window_Command
   end
 
   def make_command_list
-    slot = ResearchMod.teleport_slot(@slot_index)
+    point = ResearchMod.custom_teleport_point(@point_index)
     add_command('记录当前位置', :record)
-    add_command('传送到此处', :transfer, ResearchMod.teleport_slot_valid?(slot))
-    add_command('清除记录', :clear, !slot.nil?)
-    add_command('返回挡位列表', :cancel)
+    add_command('传送到此处', :transfer, ResearchMod.custom_teleport_point_valid?(point))
+    add_command('清除记录', :clear, !point.nil?)
+    add_command('返回自定义传送点列表', :cancel)
   end
 
   def update_help
@@ -9508,18 +9989,18 @@ class Window_ResearchModTeleportSlotAction < Window_Command
     current_text = format('当前地图：%04d「%s」　当前位置：X=%d Y=%d',
                           $game_map.map_id, ResearchMod.map_name($game_map.map_id),
                           $game_player.x, $game_player.y)
-    slot = ResearchMod.teleport_slot(@slot_index)
-    saved_text = slot ? ResearchMod.teleport_slot_text(@slot_index, slot) :
-                        format('挡位 %02d：空', @slot_index + 1)
+    point = ResearchMod.custom_teleport_point(@point_index)
+    saved_text = point ? ResearchMod.custom_teleport_point_text(@point_index, point) :
+                        format('点位 %02d：空', @point_index + 1)
     action_text = case current_symbol
                   when :record
-                    '确认后直接用当前位置覆盖此挡位。'
+                    '确认后直接用当前位置覆盖此点位。'
                   when :transfer
                     '确认后传送到已保存的地图与坐标。'
                   when :clear
-                    '确认后清除此挡位的记录。'
+                    '确认后清除此点位的记录。'
                   else
-                    '取消并返回挡位列表。'
+                    '取消并返回自定义传送点列表。'
                   end
     help_window.set_text([current_text, saved_text, action_text].join(10.chr))
   end
@@ -9873,6 +10354,181 @@ class Window_ResearchModMapEventList < Window_Command
       help_window.set_text(format('地图 %04d「%s」共有 %d 个事件。返回上一级。',
                                   @map_id, ResearchMod.map_name(@map_id), @events.size))
     end
+  end
+end
+
+class Window_ResearchModContainerList < Window_Command
+  include ResearchModEventThumbnailWindow
+
+  def initialize(help_window)
+    @map_id = $game_map.map_id
+    @events = ResearchMod.container_event_entries(@map_id)
+    super(0, 0)
+    self.help_window = help_window
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - fitting_height(3)
+  end
+
+  def make_command_list
+    add_command('全部打开', :open_all,
+                ResearchMod.container_batch_available? &&
+                @events.any? { |event| ResearchMod.container_normal_batch_openable?(@map_id, event) })
+    add_command('全部强制打开', :force_all,
+                ResearchMod.container_batch_available? &&
+                @events.any? { |event| ResearchMod.container_force_openable?(@map_id, event) })
+    @events.each_with_index do |event, index|
+      add_command(format('%02d  %s%s', index + 1,
+                         ResearchMod.battle_dialogue_display_text(
+                           ResearchMod.event_display_name(event), 24
+                         ),
+                         ResearchMod.container_hint_label(@map_id, event)),
+                  :select, true, event)
+    end
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    if current_symbol == :select
+      event = current_ext
+      text = format('事件 %04d  X=%d Y=%d\n%s\n打开：执行原事件；强制：仅静态物品。',
+                    event.id, event.x, event.y,
+                    ResearchMod.battle_dialogue_display_text(
+                      ResearchMod.event_graphic_text(@map_id, event), 48
+                    ))
+    elsif [:open_all, :force_all].include?(current_symbol) &&
+          !ResearchMod.container_batch_available?
+      text = '需要先开启“宝箱内容提示”。\n批量操作才可使用。'
+    elsif current_symbol == :open_all
+      text = '领取无开锁条件的静态物品。\n不触发战斗。\n跳过怪物、锁箱和复杂事件。'
+    elsif current_symbol == :force_all
+      text = '强制领取可解析的静态物品。\n不触发战斗。\n跳过怪物和复杂事件。'
+    else
+      text = format('当前地图 %04d「%s」：共 %d 个容器。', @map_id,
+                    ResearchMod.map_name(@map_id), @events.size)
+    end
+    help_window.set_text(text.gsub(92.chr + 'n', 10.chr))
+  end
+end
+
+class Window_ResearchModContainerAction < Window_Command
+  def initialize(event, help_window)
+    @event = event
+    @map_id = $game_map.map_id
+    super(0, 0)
+    self.help_window = help_window
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - help_window.height - height) / 2
+    update_help
+  end
+
+  def window_width
+    360
+  end
+
+  def visible_line_number
+    4
+  end
+
+  def make_command_list
+    add_command('打开', :open)
+    add_command('传送到事件', :teleport)
+    add_command('强制打开', :force,
+                ResearchMod.container_force_openable?(@map_id, @event))
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    text = case current_symbol
+           when :open
+             '传送到容器旁并执行原事件。\n保留开锁检查、战斗和原版奖励。'
+           when :teleport
+             '传送到容器相邻位置。\n不执行事件。'
+           when :force
+             '直接领取静态物品奖励。\n不执行战斗、剧情或脚本。'
+           else
+             '返回当前地图容器列表。'
+           end
+    help_window.set_text(text.gsub(92.chr + 'n', 10.chr))
+  end
+end
+
+class Window_ResearchModContainerConfirm < Window_Command
+  def initialize(label, count, help_window)
+    @label = label
+    @count = count
+    super(0, 0)
+    self.help_window = help_window
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - help_window.height - height) / 2
+    self.z = 500
+    update_help
+  end
+
+  def window_width
+    360
+  end
+
+  def visible_line_number
+    2
+  end
+
+  def make_command_list
+    add_command('确认执行', :confirm)
+    add_command('取消', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    help_window.set_text(
+      format('%s：处理 %d 个容器。\n不会触发战斗。', @label, @count).gsub(
+        92.chr + 'n', 10.chr
+      )
+    )
+  end
+end
+
+class Window_ResearchModContainerResult < Window_Command
+  def initialize(rewards, help_window)
+    @lines = ResearchMod.container_reward_summary_lines(rewards)
+    @help_height = help_window.height
+    super(0, 0)
+    self.help_window = help_window
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @help_height
+  end
+
+  def make_command_list
+    @lines.each { |line| add_command(line, :item, true) }
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    help_window.set_text(
+      format('获得物品：%d 项。\n取消：返回容器列表。', @lines.size).gsub(
+        92.chr + 'n', 10.chr
+      )
+    )
   end
 end
 
@@ -10427,7 +11083,7 @@ class Scene_ResearchMod < Scene_MenuBase
     end
     @actor = $game_party.menu_actor || $game_party.members[0]
     @command_window = Window_ResearchModCommand.new(@actor)
-    @command_help_window = Window_Help.new(3)
+    @command_help_window = Window_Help.new(4)
     @command_help_window.y = Graphics.height - @command_help_window.height
     @command_window.help_window = @command_help_window
     @command_window.update_help
@@ -10453,10 +11109,12 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:harpy_feather_original, method(:use_harpy_feather_original_without_cost))
     @command_window.set_handler(:harpy_feather_modified, method(:use_harpy_feather_modified_without_cost))
     @command_window.set_handler(:teleport, method(:open_teleport_browser))
-    @command_window.set_handler(:teleport_slots, method(:open_teleport_slots))
+    @command_window.set_handler(:custom_teleport_points, method(:open_custom_teleport_points))
     @command_window.set_handler(:lose_event, method(:open_lose_event_browser))
     @command_window.set_handler(:reflection_meeting, method(:open_reflection_meeting_browser))
     @command_window.set_handler(:map_inspector, method(:open_map_inspector))
+    @command_window.set_handler(:current_map_containers, method(:open_current_map_containers))
+    @command_window.set_handler(:chest_hint, method(:toggle_chest_hint))
     @command_window.set_handler(:debug_database, method(:open_debug_database_editor))
     @command_window.set_handler(:database_item, method(:open_database_item_menu))
     @command_window.set_handler(:gain_all_panties, method(:gain_all_panties))
@@ -11427,6 +12085,201 @@ class Scene_ResearchMod < Scene_MenuBase
     @debug_entry_id = nil
   end
 
+  def open_current_map_containers
+    @container_help_window = Window_Help.new(3)
+    @container_help_window.y = Graphics.height - @container_help_window.height
+    @container_list_window = Window_ResearchModContainerList.new(@container_help_window)
+    @container_list_window.set_handler(:select, method(:select_current_map_container))
+    @container_list_window.set_handler(:open_all, method(:confirm_open_all_containers))
+    @container_list_window.set_handler(:force_all, method(:confirm_force_open_all_containers))
+    @container_list_window.set_handler(:cancel, method(:close_current_map_containers))
+    @command_window.deactivate
+  end
+
+  def close_current_map_containers
+    defer_research_mod_window_dispose(@container_result_window)
+    defer_research_mod_window_dispose(@container_confirm_window)
+    defer_research_mod_window_dispose(@container_action_window)
+    defer_research_mod_window_dispose(@container_list_window)
+    defer_research_mod_window_dispose(@container_help_window)
+    @container_result_window = nil
+    @container_confirm_window = nil
+    @container_action_window = nil
+    @container_list_window = nil
+    @container_help_window = nil
+    @selected_container_event = nil
+    @command_window.activate
+  end
+
+  def select_current_map_container
+    @selected_container_event = @container_list_window.current_ext
+    @container_list_window.hide
+    @container_list_window.deactivate
+    @container_action_window = Window_ResearchModContainerAction.new(
+      @selected_container_event, @container_help_window
+    )
+    @container_action_window.set_handler(:open, method(:open_selected_container))
+    @container_action_window.set_handler(:teleport, method(:teleport_to_selected_container))
+    @container_action_window.set_handler(:force, method(:force_open_selected_container))
+    @container_action_window.set_handler(:cancel, method(:close_container_action))
+  end
+
+  def close_container_action
+    defer_research_mod_window_dispose(@container_action_window)
+    @container_action_window = nil
+    @selected_container_event = nil
+    refresh_current_map_container_list
+  end
+
+  def refresh_current_map_container_list
+    return unless @container_list_window
+
+    defer_research_mod_window_dispose(@container_list_window)
+    @container_list_window = Window_ResearchModContainerList.new(@container_help_window)
+    @container_list_window.set_handler(:select, method(:select_current_map_container))
+    @container_list_window.set_handler(:open_all, method(:confirm_open_all_containers))
+    @container_list_window.set_handler(:force_all, method(:confirm_force_open_all_containers))
+    @container_list_window.set_handler(:cancel, method(:close_current_map_containers))
+  end
+
+  def open_selected_container
+    unless ResearchMod.reserve_container_teleport(@selected_container_event, true)
+      Sound.play_buzzer
+      @container_action_window.activate
+      @container_help_window.set_text(
+        '找不到安全的相邻位置。\n请使用“传送到事件”。'.gsub(92.chr + 'n', 10.chr)
+      )
+      return
+    end
+
+    close_current_map_containers
+    SceneManager.goto(Scene_Map)
+  end
+
+  def teleport_to_selected_container
+    unless ResearchMod.reserve_container_teleport(@selected_container_event, false)
+      Sound.play_buzzer
+      @container_action_window.activate
+      @container_help_window.set_text('找不到安全的相邻位置。')
+      return
+    end
+
+    close_current_map_containers
+    SceneManager.goto(Scene_Map)
+  end
+
+  def force_open_selected_container
+    unless ResearchMod.container_force_openable?(
+      $game_map.map_id, @selected_container_event
+    )
+      Sound.play_buzzer
+      @container_action_window.activate
+      @container_help_window.set_text(
+        '该容器不是静态物品容器。\n不能安全强制打开。'.gsub(92.chr + 'n', 10.chr)
+      )
+      return
+    end
+
+    unless ResearchMod.reserve_container_teleport(@selected_container_event, false)
+      Sound.play_buzzer
+      @container_action_window.activate
+      @container_help_window.set_text(
+        '找不到安全的相邻位置。\n无法强制打开。'.gsub(92.chr + 'n', 10.chr)
+      )
+      return
+    end
+
+    rewards = []
+    unless ResearchMod.force_open_container(
+      $game_map.map_id, @selected_container_event, rewards
+    )
+      Sound.play_buzzer
+      @container_action_window.activate
+      @container_help_window.set_text(
+        '强制领取失败，未修改容器。'.gsub(92.chr + 'n', 10.chr)
+      )
+      return
+    end
+    ResearchMod.show_container_force_rewards(rewards)
+
+    close_current_map_containers
+    SceneManager.goto(Scene_Map)
+  end
+
+  def confirm_open_all_containers
+    return refuse_container_batch unless ResearchMod.container_batch_available?
+
+    @container_batch_events = ResearchMod.container_event_entries($game_map.map_id).select do |event|
+      ResearchMod.container_normal_batch_openable?($game_map.map_id, event)
+    end
+    open_container_batch_confirm('全部打开', @container_batch_events.size)
+  end
+
+  def confirm_force_open_all_containers
+    return refuse_container_batch unless ResearchMod.container_batch_available?
+
+    @container_batch_events = ResearchMod.container_event_entries($game_map.map_id).select do |event|
+      ResearchMod.container_force_openable?($game_map.map_id, event)
+    end
+    open_container_batch_confirm('全部强制打开', @container_batch_events.size)
+  end
+
+  def open_container_batch_confirm(label, count)
+    @container_list_window.hide
+    @container_list_window.deactivate
+    @container_confirm_window = Window_ResearchModContainerConfirm.new(
+      label, count, @container_help_window
+    )
+    @container_confirm_window.set_handler(:confirm, method(:execute_container_batch_open))
+    @container_confirm_window.set_handler(:cancel, method(:close_container_batch_confirm))
+  end
+
+  def refuse_container_batch
+    Sound.play_buzzer
+    @container_help_window.set_text(
+      '需要先开启“宝箱内容提示”。\n批量操作才可使用。'.gsub(92.chr + 'n', 10.chr)
+    )
+    @container_list_window.activate
+  end
+
+  def close_container_batch_confirm
+    defer_research_mod_window_dispose(@container_confirm_window)
+    @container_confirm_window = nil
+    @container_batch_events = nil
+    @container_list_window.show
+    @container_list_window.activate
+    @container_list_window.update_help
+  end
+
+  def execute_container_batch_open
+    events = @container_batch_events || []
+    rewards = []
+    opened = events.count do |event|
+      ResearchMod.force_open_container($game_map.map_id, event, rewards)
+    end
+    defer_research_mod_window_dispose(@container_confirm_window)
+    @container_confirm_window = nil
+    @container_batch_events = nil
+    @container_result_window = Window_ResearchModContainerResult.new(
+      rewards, @container_help_window
+    )
+    @container_result_window.set_handler(:item, method(:keep_container_result))
+    @container_result_window.set_handler(:cancel, method(:close_container_result))
+  end
+
+  def keep_container_result
+    @container_result_window.activate if @container_result_window
+  end
+
+  def close_container_result
+    defer_research_mod_window_dispose(@container_result_window)
+    @container_result_window = nil
+    refresh_current_map_container_list
+    @container_help_window.set_text(
+      '批量操作完成。\n怪物与复杂事件已跳过。'.gsub(92.chr + 'n', 10.chr)
+    )
+  end
+
   def open_map_inspector
     @map_help_window = Window_Help.new(3)
     @map_help_window.y = Graphics.height - @map_help_window.height
@@ -11761,7 +12614,7 @@ class Scene_ResearchMod < Scene_MenuBase
     unless item && defined?(Scene_Warp) && ResearchMod.harpy_feather_modified_usable?
       Sound.play_buzzer
       @command_window.activate
-      @command_help_window.set_text('当前无法使用「哈比羽毛改」：原版传送禁止条件正在生效。')
+      @command_help_window.set_text('当前无法使用「哈比羽毛改」：缺少传送场景或有效地点数据。')
       return
     end
 
@@ -11779,72 +12632,72 @@ class Scene_ResearchMod < Scene_MenuBase
     SceneManager.scene.prepare(free_item)
   end
 
-  def open_teleport_slots
-    @teleport_slot_help_window = Window_Help.new(3)
-    @teleport_slot_help_window.y = Graphics.height - @teleport_slot_help_window.height
-    @teleport_slot_window = Window_ResearchModTeleportSlotList.new(
-      @teleport_slot_help_window
+  def open_custom_teleport_points
+    @custom_teleport_point_help_window = Window_Help.new(3)
+    @custom_teleport_point_help_window.y = Graphics.height - @custom_teleport_point_help_window.height
+    @custom_teleport_point_window = Window_ResearchModCustomTeleportPointList.new(
+      @custom_teleport_point_help_window
     )
-    @teleport_slot_window.set_handler(:select, method(:select_teleport_slot))
-    @teleport_slot_window.set_handler(:cancel, method(:close_teleport_slots))
+    @custom_teleport_point_window.set_handler(:select, method(:select_custom_teleport_point))
+    @custom_teleport_point_window.set_handler(:cancel, method(:close_custom_teleport_points))
     @command_window.deactivate
   end
 
-  def select_teleport_slot
-    @selected_teleport_slot_index = @teleport_slot_window.current_ext
-    @teleport_slot_window.hide
-    @teleport_slot_window.deactivate
-    @teleport_slot_action_window = Window_ResearchModTeleportSlotAction.new(
-      @selected_teleport_slot_index, @teleport_slot_help_window
+  def select_custom_teleport_point
+    @selected_custom_teleport_point_index = @custom_teleport_point_window.current_ext
+    @custom_teleport_point_window.hide
+    @custom_teleport_point_window.deactivate
+    @custom_teleport_point_action_window = Window_ResearchModCustomTeleportPointAction.new(
+      @selected_custom_teleport_point_index, @custom_teleport_point_help_window
     )
-    @teleport_slot_action_window.set_handler(:record, method(:record_current_teleport_slot))
-    @teleport_slot_action_window.set_handler(:transfer, method(:execute_teleport_slot))
-    @teleport_slot_action_window.set_handler(:clear, method(:clear_teleport_slot))
-    @teleport_slot_action_window.set_handler(:cancel, method(:close_teleport_slot_action))
+    @custom_teleport_point_action_window.set_handler(:record, method(:save_current_custom_teleport_point))
+    @custom_teleport_point_action_window.set_handler(:transfer, method(:execute_custom_teleport_point))
+    @custom_teleport_point_action_window.set_handler(:clear, method(:clear_custom_teleport_point))
+    @custom_teleport_point_action_window.set_handler(:cancel, method(:close_custom_teleport_point_action))
   end
 
-  def record_current_teleport_slot
-    ResearchMod.save_current_teleport_slot(@selected_teleport_slot_index)
-    close_teleport_slot_action
+  def save_current_custom_teleport_point
+    ResearchMod.save_current_custom_teleport_point(@selected_custom_teleport_point_index)
+    close_custom_teleport_point_action
   end
 
-  def clear_teleport_slot
-    ResearchMod.clear_teleport_slot(@selected_teleport_slot_index)
-    close_teleport_slot_action
+  def clear_custom_teleport_point
+    ResearchMod.clear_custom_teleport_point(@selected_custom_teleport_point_index)
+    close_custom_teleport_point_action
   end
 
-  def execute_teleport_slot
-    unless ResearchMod.reserve_teleport_slot(@selected_teleport_slot_index)
+  def execute_custom_teleport_point
+    unless ResearchMod.reserve_custom_teleport_point(@selected_custom_teleport_point_index)
       Sound.play_buzzer
-      @teleport_slot_action_window.activate
-      @teleport_slot_help_window.set_text('保存的地图或坐标无效。请清除后重新记录。')
+      @custom_teleport_point_action_window.activate
+      @custom_teleport_point_help_window.set_text('保存的地图或坐标无效。请清除后重新记录。')
       return
     end
 
-    close_teleport_slots
+    close_custom_teleport_points
     SceneManager.goto(Scene_Map)
   end
 
-  def close_teleport_slot_action
-    index = @selected_teleport_slot_index
-    defer_research_mod_window_dispose(@teleport_slot_action_window)
-    @teleport_slot_action_window = nil
-    @selected_teleport_slot_index = nil
-    @teleport_slot_window.refresh
-    @teleport_slot_window.select(index)
-    @teleport_slot_window.show
-    @teleport_slot_window.activate
-    @teleport_slot_window.update_help
+  def close_custom_teleport_point_action
+    index = @selected_custom_teleport_point_index
+    defer_research_mod_window_dispose(@custom_teleport_point_action_window)
+    @custom_teleport_point_action_window = nil
+    @selected_custom_teleport_point_index = nil
+    @custom_teleport_point_window.refresh
+    @custom_teleport_point_window.select(index)
+    @custom_teleport_point_window.show
+    @custom_teleport_point_window.activate
+    @custom_teleport_point_window.update_help
   end
 
-  def close_teleport_slots
-    defer_research_mod_window_dispose(@teleport_slot_action_window)
-    defer_research_mod_window_dispose(@teleport_slot_window)
-    defer_research_mod_window_dispose(@teleport_slot_help_window)
-    @teleport_slot_action_window = nil
-    @teleport_slot_window = nil
-    @teleport_slot_help_window = nil
-    @selected_teleport_slot_index = nil
+  def close_custom_teleport_points
+    defer_research_mod_window_dispose(@custom_teleport_point_action_window)
+    defer_research_mod_window_dispose(@custom_teleport_point_window)
+    defer_research_mod_window_dispose(@custom_teleport_point_help_window)
+    @custom_teleport_point_action_window = nil
+    @custom_teleport_point_window = nil
+    @custom_teleport_point_help_window = nil
+    @selected_custom_teleport_point_index = nil
     @command_window.activate
   end
 
@@ -13096,6 +13949,13 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.activate
   end
 
+  def toggle_chest_hint
+    ResearchMod.toggle_chest_hint
+    @command_window.refresh
+    @command_window.activate
+    @command_window.update_help
+  end
+
   def select_persona
     @persona_window = Window_ResearchModPersonaList.new(@actor)
     @persona_window.set_handler(:select, method(:apply_persona))
@@ -13184,6 +14044,7 @@ class Scene_Map < Scene_Base
   alias research_mod_custom_battle_update_scene update_scene
   alias research_mod_audio_overlay_update update
   alias research_mod_audio_overlay_terminate terminate
+  alias research_mod_container_perform_transfer perform_transfer
 
   def start
     ResearchMod.cleanup_temporary_troop
@@ -13200,6 +14061,11 @@ class Scene_Map < Scene_Base
   def terminate
     dispose_research_mod_audio_overlay
     research_mod_audio_overlay_terminate
+  end
+
+  def perform_transfer
+    research_mod_container_perform_transfer
+    ResearchMod.start_pending_container_event
   end
 
   def update_scene
@@ -13270,6 +14136,89 @@ class Scene_Menu < Scene_MenuBase
 
   def command_research_mod
     SceneManager.call(Scene_ResearchMod)
+  end
+end
+
+class Sprite_Character < Sprite_Base
+  alias research_mod_chest_hint_initialize initialize
+
+  def initialize(viewport, character = nil)
+    @research_mod_chest_hint_sprite = nil
+    @research_mod_chest_hint_icon_id = nil
+    research_mod_chest_hint_initialize(viewport, character)
+    update_research_mod_chest_hint
+  end
+
+  alias research_mod_chest_hint_update update
+
+  def update
+    research_mod_chest_hint_update
+    update_research_mod_chest_hint
+  end
+
+  alias research_mod_chest_hint_dispose dispose
+
+  def dispose
+    dispose_research_mod_chest_hint
+    research_mod_chest_hint_dispose
+  end
+
+  def create_research_mod_chest_hint
+    @research_mod_chest_hint_sprite = Sprite.new(viewport)
+    @research_mod_chest_hint_sprite.bitmap = Bitmap.new(24, 24)
+    @research_mod_chest_hint_sprite.ox = 12
+    @research_mod_chest_hint_sprite.oy = 24
+    @research_mod_chest_hint_icon_id = nil
+  end
+
+  def update_research_mod_chest_hint
+    type = ResearchMod.chest_hint_type(@character)
+    sprite = @research_mod_chest_hint_sprite
+    unless type
+      sprite.visible = false if sprite
+      return
+    end
+
+    create_research_mod_chest_hint unless sprite
+    sprite = @research_mod_chest_hint_sprite
+    icon_id = ResearchMod.chest_hint_icon_id(type)
+    valid_icon = refresh_research_mod_chest_hint_icon(icon_id)
+    sprite.visible = visible && valid_icon
+    return unless sprite.visible
+
+    sprite.x = x
+    sprite.y = y - height - 4
+    sprite.z = z + 200
+    sprite.opacity = opacity
+  end
+
+  def refresh_research_mod_chest_hint_icon(icon_id)
+    return false if icon_id.nil? || icon_id.to_i < 0
+
+    icon_id = icon_id.to_i
+    iconset = Cache.system('Iconset')
+    columns = iconset.width / 24
+    rows = iconset.height / 24
+    return false if columns <= 0 || rows <= 0 || icon_id >= columns * rows
+    return true if @research_mod_chest_hint_icon_id == icon_id
+
+    bitmap = @research_mod_chest_hint_sprite.bitmap
+    bitmap.clear
+    source = Rect.new(icon_id % columns * 24, icon_id / columns * 24, 24, 24)
+    bitmap.blt(0, 0, iconset, source)
+    @research_mod_chest_hint_icon_id = icon_id
+    true
+  rescue
+    false
+  end
+
+  def dispose_research_mod_chest_hint
+    sprite = @research_mod_chest_hint_sprite
+    return unless sprite
+
+    sprite.bitmap.dispose if sprite.bitmap && !sprite.bitmap.disposed?
+    sprite.dispose unless sprite.disposed?
+    @research_mod_chest_hint_sprite = nil
   end
 end
 
