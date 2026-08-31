@@ -10,6 +10,7 @@ module ResearchMod
                        '魔法力', '魔法防御', '敏捷', '幸运']
   DATABASE_PAGE_SIZE = 200
   BATTLE_PAGE_SIZE = 200
+  CUSTOM_BATTLE_HELP_LINES = 10
   LOSE_EVENT_PAGE_SIZE = 200
   MAP_PAGE_SIZE = 100
   CUSTOM_TELEPORT_POINT_COUNT = 10
@@ -26,6 +27,67 @@ module ResearchMod
   ACTOR_ENCYCLOPEDIA_LIST_WIDTH = 304
   ACTOR_ENCYCLOPEDIA_WRAP_CHARS = 26
   ACTOR_ENCYCLOPEDIA_FONT_SIZE = 18
+  CLASS_SKILL_TYPE_TRANSLATIONS = {
+    '戦技アビリティ' => '战技能力',
+    '職技アビリティ' => '职技能力',
+    '魔法アビリティ' => '魔法能力',
+    '防御アビリティ' => '防御能力',
+    '特殊アビリティ' => '特殊能力',
+    'マスターアビリティ' => '大师能力',
+    '短剣技' => '短剑技',
+    '剣技' => '剑技',
+    '尖剣技' => '尖剑技',
+    '刀技' => '刀技',
+    '槍技' => '枪技',
+    '斧技' => '斧技',
+    '棍技' => '棍技',
+    '鎌技' => '镰技',
+    '弓技' => '弓技',
+    '鞭技' => '鞭技',
+    '投擲技' => '投掷技',
+    '鉄球技' => '铁球技',
+    '銃技' => '铳技',
+    '聖技' => '圣技',
+    '闇技' => '暗技',
+    '魔法剣' => '魔法剑',
+    '白魔法' => '白魔法',
+    '黒魔法' => '黑魔法',
+    '時魔法' => '时魔法',
+    '召喚' => '召唤',
+    '陰陽術' => '阴阳术',
+    '忍術' => '忍术',
+    '商技' => '商技',
+    '盗賊技' => '盗贼技',
+    '海賊技' => '海盗技',
+    'ヒーロー技' => '英雄技',
+    'EXアイテム' => 'EX物品',
+    'オラクル' => '神谕',
+    '歌う' => '歌唱',
+    '話す' => '交谈',
+    '錬金術' => '炼金术',
+    '魔本術' => '魔本术',
+    'マキナ' => '器械',
+    '医術' => '医术',
+    '御奉仕' => '侍奉',
+    '屍技' => '尸技',
+    '自然感応' => '自然感应',
+    'ブレス' => '吐息',
+    '装備武器' => '装备武器',
+    '拘束時専用技' => '拘束时专用技',
+    '永久拘束時専用技' => '永久拘束时专用技',
+    'サイコ' => '念动',
+    '妖術' => '妖术',
+    '格闘技' => '格斗技',
+    'ブーメラン技' => '回旋镖技'
+  }
+  CLASS_ABILITY_TYPE_TRANSLATIONS = {
+    1 => ['戦技アビリティ', '战技能力'],
+    2 => ['職技アビリティ', '职技能力'],
+    3 => ['魔法アビリティ', '魔法能力'],
+    4 => ['防御アビリティ', '防御能力'],
+    5 => ['特殊アビリティ', '特殊能力'],
+    999 => ['マスターアビリティ', '大师能力']
+  }
   PANTY_ARMOR_ID_RANGE = (1801..2097)
   MILK_ITEM_ID_RANGE = (1001..1741)
   MARRIAGE_ARMOR_ID_RANGE = (8001..8020)
@@ -126,6 +188,7 @@ module ResearchMod
   BATTLE_CUTIN_VIEW_KEY = :@research_mod_battle_cutin_view
   BATTLE_RECORD_KEY = :@research_mod_battle_record
   BATTLE_EDITOR_KEY = :@research_mod_battle_editor
+  FORCE_VICTORY_KEY = :@research_mod_force_victory
   TEMPTATION_IMMUNITY_KEY = :@research_mod_temptation_immunity
   TEMPTATION_STATE_ID = 26
   MOONLESS_DANCE_SKILL_ID = 9397
@@ -163,14 +226,17 @@ module ResearchMod
   PERSONA_DIALOGUE_COMPATIBILITY_KEY = :@research_mod_persona_dialogue_compatibility
   LOVE_DIALOGUE_COMPATIBILITY_KEY = :@research_mod_love_dialogue_compatibility
   MAOUJOU_GIFT_DIALOGUE_COMPATIBILITY_KEY = :@research_mod_maoujou_gift_dialogue
+  MAOUJOU_PLEADING_DIALOGUE_COMPATIBILITY_KEY = :@research_mod_maoujou_pleading_dialogue
   MAOUJOU_REMOVE_CANDIDATE_COMPATIBILITY_KEY = :@research_mod_maoujou_remove_candidate
+  MAOUJOU_PLEADING_SUPPRESSION_KEY = :@research_mod_maoujou_pleading_suppression
   CANDIDATE_DIALOGUE_VIEW_KEY = :@research_mod_candidate_dialogue_view
   ALL_DIALOGUE_FORCE_PARTY_KEY = :@research_mod_all_dialogue_force_party
   PERSONA_DIALOGUE_MENU_TEXT = '形態変化させる'
   RESEARCH_PERSONA_DIALOGUE_MENU_TEXT = '魔王城对话形态变化（无视事件）'
   RESEARCH_LOVE_DIALOGUE_MENU_TEXT = '魔王城好感度修改'
   RESEARCH_MAOUJOU_GIFT_DIALOGUE_MENU_TEXT = '赠送礼物改'
-  RESEARCH_MAOUJOU_REMOVE_CANDIDATE_MENU_TEXT = '移出候补'
+  RESEARCH_MAOUJOU_PLEADING_DIALOGUE_MENU_TEXT = '魔王城撒娇改'
+  RESEARCH_MAOUJOU_REMOVE_CANDIDATE_MENU_TEXT = '魔王城移除候补'
   CANDIDATE_DIALOGUE_MENU_TEXT = "魔王城全对话"
   PERSONA_DIALOGUE_VARIABLE_ID = 11
   RING_RECIPIENT_VARIABLE_ID = 1402
@@ -348,6 +414,313 @@ module ResearchMod
   def self.valid_target?(kind, target_id)
     entry = $data_classes[target_id]
     entry && (kind == :class ? entry.job? : entry.tribe?)
+  end
+
+  def self.class_learning_entries(entry)
+    return [] unless entry && entry.respond_to?(:learnings)
+
+    entry.learnings.map do |learning|
+      skill = $data_skills[learning.skill_id] if $data_skills
+      next unless skill
+
+      [learning.level.to_i, skill]
+    end.compact.sort_by { |level, skill| [level, skill.id] }
+  rescue
+    []
+  end
+
+  def self.class_learning_category(skill)
+    return '技能分类未知' unless skill
+
+    stype_id = skill.respond_to?(:stype_id) ? skill.stype_id.to_i : 0
+    ability = skill.respond_to?(:ability?) ? skill.ability? : false
+    if ability && CLASS_ABILITY_TYPE_TRANSLATIONS.key?(stype_id)
+      pair = CLASS_ABILITY_TYPE_TRANSLATIONS[stype_id]
+      return format('%s（%s）', pair[0], pair[1])
+    end
+
+    type_name = if $data_system && $data_system.respond_to?(:skill_types)
+                  $data_system.skill_types[stype_id].to_s
+                else
+                  ''
+                end
+    type_name = '技能分类未知' if type_name.empty?
+    translated = CLASS_SKILL_TYPE_TRANSLATIONS[type_name]
+    return format('%s（%s）', type_name, translated) if translated
+
+    reverse_name = CLASS_SKILL_TYPE_TRANSLATIONS.key(type_name)
+    return format('%s（%s）', reverse_name, type_name) if reverse_name
+
+    type_name
+  rescue
+    '技能分类未知'
+  end
+
+  def self.class_learning_lines(entry, kind = :class)
+    kind_name = kind == :class ? '职业' : '种族'
+    return [format('%s数据不存在。', kind_name)] unless entry
+
+    lines = [format('%s ID %d  %s', kind_name, entry.id, entry.name)]
+    lines << format('最高等级：%d', entry.max_lv.to_i) if entry.respond_to?(:max_lv)
+    entries = class_learning_entries(entry)
+    if entries.empty?
+      lines << '没有配置升级学习的技能或能力。'
+      return lines
+    end
+
+    entries.group_by { |level, _skill| level }.sort_by { |level, _skills| level }.each do |level, level_entries|
+      lines << format('Lv %d', level)
+      level_entries.each do |_learning_level, skill|
+        lines << format('ID %d', skill.id)
+        lines << format('名称：%s', skill.name.to_s)
+        lines << format('所属：%s', class_learning_category(skill))
+        description = if skill.respond_to?(:description)
+                        skill.description.to_s.gsub(92.chr + 'n', 10.chr)
+                      else
+                        ''
+                      end
+        lines << '说明：'
+        unless description.empty?
+          description.split(/\r?\n/, -1).each do |line|
+            lines << line.to_s
+          end
+        end
+        lines << ''
+      end
+    end
+    lines
+  rescue
+    [format('%s学习数据读取失败。', kind_name)]
+  end
+
+  def self.class_learning_half_width
+    [Graphics.width / 2, 1].max
+  end
+
+  # Return the same five skill groups used by the battle dialogue browser.
+  def self.all_skill_categories
+    BATTLE_DIALOGUE_SKILL_CATEGORIES
+  end
+
+  # Build the second-level skill-type entries for a top-level category.
+  def self.all_skill_type_entries(category)
+    return [] unless category
+
+    type_ids = Array(category[:type_ids]).dup
+    # Keep ordinary skills with custom database type IDs reachable from the
+    # "other skills" group while still excluding ability types.
+    if category.equal?(BATTLE_DIALOGUE_SKILL_CATEGORIES.last)
+      known_ids = BATTLE_DIALOGUE_SKILL_CATEGORIES.inject([]) do |ids, item|
+        ids + Array(item[:type_ids])
+      end
+      custom_ids = ($data_skills || []).compact.inject([]) do |ids, skill|
+        next ids if skill.respond_to?(:ability?) && skill.ability?
+
+        ids + (skill.respond_to?(:stypes) ? Array(skill.stypes) :
+          (skill.respond_to?(:stype_id) ? [skill.stype_id] : []))
+      end
+      type_ids |= custom_ids.compact.map(&:to_i).reject { |id| known_ids.include?(id) }
+    end
+    type_ids.sort.map do |type_id|
+      name = if $data_system && $data_system.respond_to?(:skill_types)
+               $data_system.skill_types[type_id].to_s
+             else
+               ''
+             end
+      next if name.empty?
+
+      { :type_id => type_id, :name => name,
+        :category_label => category[:label] }
+    end.compact
+  rescue
+    []
+  end
+
+  # Enumerate every ordinary database skill in the selected skill type.
+  def self.all_skill_entries(type_id)
+    return [] unless $data_skills
+
+    $data_skills.compact.select do |skill|
+      next false if skill.respond_to?(:ability?) && skill.ability?
+
+      skill_has_type?(skill, type_id)
+    end.sort_by { |skill| [skill.id.to_i, skill.name.to_s] }
+  rescue
+    []
+  end
+
+  # Format a skill type as Japanese text followed by its Chinese translation.
+  def self.all_skill_type_label(type_id)
+    name = if $data_system && $data_system.respond_to?(:skill_types)
+             $data_system.skill_types[type_id].to_s
+           else
+             ''
+           end
+    name = '技能分类未知' if name.empty?
+    translated = CLASS_SKILL_TYPE_TRANSLATIONS[name]
+    translated ? format('%s（%s）', name, translated) : name
+  rescue
+    '技能分类未知'
+  end
+
+  def self.all_skill_learning_status(actor, skill)
+    return false unless actor && skill
+
+    actor.skill_learn?(skill)
+  rescue
+    false
+  end
+
+  # Learn a normal skill and keep the actor backup behavior consistent with
+  # the existing learning menu.
+  def self.learn_all_skill(actor, skill_id)
+    skill = $data_skills[skill_id] if $data_skills
+    return false unless actor && skill
+    return false if skill.respond_to?(:ability?) && skill.ability?
+    return false if all_skill_learning_status(actor, skill)
+    return false if actor.respond_to?(:skill_learnable?) && !actor.skill_learnable?(skill)
+
+    snapshot(actor) unless snapshot?(actor)
+    actor.learn_skill(skill.id)
+    actor.refresh if actor.respond_to?(:refresh)
+    all_skill_learning_status(actor, skill)
+  rescue
+    false
+  end
+
+  def self.forget_all_skill(actor, skill_id)
+    skill = $data_skills[skill_id] if $data_skills
+    return false unless actor && skill
+    return false if skill.respond_to?(:ability?) && skill.ability?
+    return false unless all_skill_learning_status(actor, skill)
+
+    snapshot(actor) unless snapshot?(actor)
+    actor.forget_skill(skill.id)
+    actor.refresh if actor.respond_to?(:refresh)
+    !all_skill_learning_status(actor, skill)
+  rescue
+    false
+  end
+
+  # Learn every available ordinary skill in one skill type.
+  def self.learn_all_skills_in_type(actor, type_id)
+    skills = all_skill_entries(type_id).select do |skill|
+      !all_skill_learning_status(actor, skill) &&
+        (!actor.respond_to?(:skill_learnable?) || actor.skill_learnable?(skill))
+    end
+    return 0 if skills.empty?
+
+    snapshot(actor) unless snapshot?(actor)
+    skills.each { |skill| actor.learn_skill(skill.id) }
+    actor.refresh if actor.respond_to?(:refresh)
+    skills.count { |skill| all_skill_learning_status(actor, skill) }
+  rescue
+    0
+  end
+
+  # Forget every learned ordinary skill in one skill type.
+  def self.forget_all_skills_in_type(actor, type_id)
+    skills = all_skill_entries(type_id).select do |skill|
+      all_skill_learning_status(actor, skill)
+    end
+    return 0 if skills.empty?
+
+    snapshot(actor) unless snapshot?(actor)
+    skills.each { |skill| actor.forget_skill(skill.id) }
+    actor.refresh if actor.respond_to?(:refresh)
+    skills.count { |skill| !all_skill_learning_status(actor, skill) }
+  rescue
+    0
+  end
+
+  # Return the ability categories defined by the game's ability system.
+  def self.ability_type_entries
+    CLASS_ABILITY_TYPE_TRANSLATIONS.keys.sort.map do |stype_id|
+      pair = CLASS_ABILITY_TYPE_TRANSLATIONS[stype_id]
+      { :stype_id => stype_id, :name => pair[0], :translated_name => pair[1] }
+    end
+  end
+
+  # Enumerate all database abilities in the selected ability category.
+  def self.ability_entries(stype_id)
+    return [] unless $data_skills
+
+    $data_skills.compact.select do |skill|
+      ability = skill.respond_to?(:ability?) && skill.ability?
+      ability && skill.respond_to?(:stype_id) && skill.stype_id.to_i == stype_id.to_i
+    end.sort_by { |skill| [skill.id.to_i, skill.name.to_s] }
+  rescue
+    []
+  end
+
+  def self.ability_learning_status(actor, ability)
+    return false unless actor && ability
+
+    learned = actor.skill_learn?(ability)
+    if actor.respond_to?(:all_abilities)
+      learned ||= Array(actor.all_abilities).include?(ability.id)
+    end
+    learned
+  rescue
+    false
+  end
+
+  # Learn one ability without requiring a class or tribe learning record.
+  def self.learn_ability(actor, ability_id)
+    ability = $data_skills[ability_id] if $data_skills
+    return false unless actor && ability && ability_entries(ability.stype_id).include?(ability)
+    return false if ability_learning_status(actor, ability)
+    return false if actor.respond_to?(:skill_learnable?) && !actor.skill_learnable?(ability)
+
+    snapshot(actor) unless snapshot?(actor)
+    actor.learn_skill(ability.id)
+    actor.refresh if actor.respond_to?(:refresh)
+    ability_learning_status(actor, ability)
+  rescue
+    false
+  end
+
+  # Forget one ability from the current actor.
+  def self.forget_ability(actor, ability_id)
+    ability = $data_skills[ability_id] if $data_skills
+    return false unless actor && ability && ability_entries(ability.stype_id).include?(ability)
+    return false unless ability_learning_status(actor, ability)
+
+    snapshot(actor) unless snapshot?(actor)
+    actor.forget_skill(ability.id)
+    actor.refresh if actor.respond_to?(:refresh)
+    !ability_learning_status(actor, ability)
+  rescue
+    false
+  end
+
+  def self.learn_all_abilities_in_type(actor, stype_id)
+    abilities = ability_entries(stype_id).select do |ability|
+      !ability_learning_status(actor, ability) &&
+        (!actor.respond_to?(:skill_learnable?) || actor.skill_learnable?(ability))
+    end
+    return 0 if abilities.empty?
+
+    snapshot(actor) unless snapshot?(actor)
+    abilities.each { |ability| actor.learn_skill(ability.id) }
+    actor.refresh if actor.respond_to?(:refresh)
+    abilities.count { |ability| ability_learning_status(actor, ability) }
+  rescue
+    0
+  end
+
+  def self.forget_all_abilities_in_type(actor, stype_id)
+    abilities = ability_entries(stype_id).select do |ability|
+      ability_learning_status(actor, ability)
+    end
+    return 0 if abilities.empty?
+
+    snapshot(actor) unless snapshot?(actor)
+    abilities.each { |ability| actor.forget_skill(ability.id) }
+    actor.refresh if actor.respond_to?(:refresh)
+    abilities.count { |ability| !ability_learning_status(actor, ability) }
+  rescue
+    0
   end
 
   def self.snapshot_store
@@ -1257,6 +1630,18 @@ end
     type == :monster || type == :item ? type : nil
   rescue
     nil
+  end
+
+  def self.chest_hint_completed?(event)
+    return false unless chest_hint_enabled? && chest_event?(event)
+
+    map_id = event.respond_to?(:map_id) ? event.map_id : nil
+    map_id = $game_map.map_id if map_id.nil? && defined?($game_map) && $game_map
+    return false if map_id.nil?
+
+    container_opened?(map_id, event)
+  rescue
+    false
   end
 
   def self.container_event_data(event)
@@ -2632,6 +3017,18 @@ end
     enabled
   end
 
+  def self.force_victory_enabled?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(FORCE_VICTORY_KEY) == true
+  end
+
+  def self.toggle_force_victory
+    enabled = !force_victory_enabled?
+    $game_system.instance_variable_set(FORCE_VICTORY_KEY, enabled)
+    enabled
+  end
+
   def self.temptation_immunity?
     return false unless $game_system
 
@@ -2923,6 +3320,113 @@ end
       enemy_help_item_lines('可偷内裤：', enemy_steal_entry_texts(enemy, 4, false)),
       enemy_help_item_lines('可偷牛奶：', [enemy_milk_text(enemy)])
     ].flatten
+  end
+
+  def self.enemy_follower_actor_id(enemy)
+    return nil unless enemy
+
+    database_enemy = enemy.respond_to?(:enemy) ? enemy.enemy : enemy
+    return nil unless database_enemy
+
+    [enemy, database_enemy].compact.uniq.each do |candidate|
+      next unless candidate.respond_to?(:follower_actor_id)
+
+      value = candidate.follower_actor_id
+      actor_id = value.respond_to?(:to_i) ? value.to_i : 0
+      return actor_id if actor_id > 0
+    end
+
+    settings = defined?(NWConst::Follower::SETTINGS) ?
+               NWConst::Follower::SETTINGS : {}
+    enemy_ids = [database_enemy.id.to_i]
+    if database_enemy.respond_to?(:base_enemy)
+      base_enemy = database_enemy.base_enemy
+      enemy_ids << base_enemy.id.to_i if base_enemy
+    end
+    enemy_ids.uniq.each do |enemy_id|
+      setting = settings[enemy_id]
+      next unless setting.is_a?(Hash)
+
+      actor_id = setting[:actor_id].to_i
+      return actor_id if actor_id > 0
+    end
+
+    if database_enemy.respond_to?(:join_switch)
+      join_switch = database_enemy.join_switch.to_i
+      actor_base = if defined?(NWConst::Sw::ADD_ACTOR_BASE)
+                     NWConst::Sw::ADD_ACTOR_BASE.to_i
+                   end
+      if actor_base && join_switch > actor_base
+        return join_switch - actor_base
+      end
+    end
+    nil
+  rescue
+    nil
+  end
+
+  def self.enemy_follower_actor(enemy)
+    actor_id = enemy_follower_actor_id(enemy)
+    return nil unless actor_id && $data_actors && $data_actors[actor_id]
+
+    if $game_actors && $game_actors.respond_to?(:[])
+      actor = $game_actors[actor_id]
+      return actor if actor
+    end
+    $data_actors[actor_id]
+  rescue
+    nil
+  end
+
+  def self.follower_dialogue_word(actor, key)
+    return nil unless actor
+
+    settings = defined?(NWConst::Follower::SETTINGS) ? NWConst::Follower::SETTINGS : {}
+    setting = settings.values.find do |entry|
+      entry.is_a?(Hash) && entry[:actor_id].to_i == actor.id.to_i
+    end
+    value = setting && (setting[key] || setting[key.to_s])
+    return nil unless value.is_a?(Array) && !value.empty?
+
+    Word.new(value[0], value[1], value[2])
+  rescue
+    nil
+  end
+
+  def self.enemy_follower_status_text(actor_id)
+    party = $game_party
+    return '未入队' unless party
+
+    id = actor_id.to_i
+    party_actor_ids = party.respond_to?(:actors) ? party.actors.to_a : []
+    return '已入队' if party_actor_ids.include?(id)
+
+    if party.respond_to?(:stand_actors) &&
+       party.stand_actors.to_a.include?(id)
+      return '候补中'
+    end
+    return '已入队' if party.respond_to?(:follow?) && party.follow?(id)
+
+    '未入队'
+  rescue
+    '未入队'
+  end
+
+  def self.enemy_follower_help_lines(enemy)
+    actor_id = enemy_follower_actor_id(enemy)
+    unless actor_id
+      return ['对应队友：无　入队状态：不适用']
+    end
+
+    actor = $data_actors[actor_id] if defined?($data_actors) && $data_actors
+    actor_name = actor && !actor.name.to_s.empty? ? actor.name.to_s : '未知角色'
+    status = enemy_follower_status_text(actor_id)
+    enemy_help_item_lines(
+      '对应队友：',
+      [format('%d %s　入队状态：%s', actor_id, actor_name, status)]
+    )
+  rescue
+    ['对应队友：无　入队状态：不适用']
   end
 
   def self.database_object(drop)
@@ -4351,6 +4855,55 @@ end
     enabled
   end
 
+  def self.maoujou_pleading_dialogue_compatibility?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(MAOUJOU_PLEADING_DIALOGUE_COMPATIBILITY_KEY) == true
+  end
+
+  def self.toggle_maoujou_pleading_dialogue_compatibility
+    enabled = !maoujou_pleading_dialogue_compatibility?
+    $game_system.instance_variable_set(MAOUJOU_PLEADING_DIALOGUE_COMPATIBILITY_KEY, enabled)
+    $game_map.need_refresh = true if $game_map
+    enabled
+  end
+
+  def self.maoujou_pleading_suppression?
+    return false unless $game_temp
+
+    $game_temp.instance_variable_get(MAOUJOU_PLEADING_SUPPRESSION_KEY) == true
+  end
+
+  def self.set_maoujou_pleading_suppression(value)
+    return unless $game_temp
+
+    $game_temp.instance_variable_set(MAOUJOU_PLEADING_SUPPRESSION_KEY, value == true)
+  end
+
+  def self.maoujou_pleading_request_pending?
+    @maoujou_pleading_request_pending == true
+  end
+
+  def self.set_maoujou_pleading_request_pending(value)
+    @maoujou_pleading_request_pending = (value == true)
+  end
+
+  def self.maoujou_pleading_request_choice_count
+    @maoujou_pleading_request_choice_count.to_i
+  end
+
+  def self.set_maoujou_pleading_request_choice_count(value)
+    @maoujou_pleading_request_choice_count = value.to_i
+  end
+
+  def self.maoujou_pleading_choice_mode
+    @maoujou_pleading_choice_mode
+  end
+
+  def self.set_maoujou_pleading_choice_mode(value)
+    @maoujou_pleading_choice_mode = value
+  end
+
   def self.maoujou_remove_candidate_compatibility?
     return false unless $game_system
 
@@ -5166,10 +5719,53 @@ class Window_NumberInput
   end
 end
 
+class Game_Message
+  alias research_mod_pleading_choice_proc_set choice_proc=
+
+  def choice_proc=(handler)
+    choices = instance_variable_get(:@choices)
+    pleading_choices = ResearchMod.maoujou_pleading_request_pending? &&
+                       choices.is_a?(Array) && choices[0].to_s == '拒绝'
+    unless pleading_choices
+      instance_variable_set(:@research_mod_pleading_choice_help_active, false)
+      return self.research_mod_pleading_choice_proc_set(handler)
+    end
+
+    instance_variable_set(:@research_mod_pleading_choice_help_active, true)
+    original_count = ResearchMod.maoujou_pleading_request_choice_count
+    wrapped_handler = proc do |selected|
+      selected_index = selected.to_i
+      if selected_index == 0
+        mapped_index = 0
+        mode = :refusal
+      elsif selected_index < original_count
+        mapped_index = selected_index - 1
+        mode = :success
+      else
+        mapped_index = [original_count - 1, 0].max
+        mode = nil
+      end
+      ResearchMod.set_maoujou_pleading_choice_mode(mode)
+      handler.call(mapped_index)
+      instance_variable_set(:@research_mod_pleading_choice_help_active, false)
+    end
+    self.research_mod_pleading_choice_proc_set(wrapped_handler)
+  end
+end
+
 class Game_Interpreter
   alias research_mod_move_actor_ex move_actor_ex
+  alias research_mod_maoujou_pleading_move_actor move_actor
+  alias research_mod_maoujou_pleading_release_temp_actors release_temp_actors
   alias research_mod_unlimited_choices unlimited_choices
+  alias research_mod_pleading_execute_command execute_command
   alias research_mod_command_111 command_111
+  alias research_mod_maoujou_pleading_command_102 command_102
+  alias research_mod_maoujou_pleading_command_137 command_137
+  alias research_mod_maoujou_pleading_command_355 command_355
+  if method_defined?(:forced_transfer)
+    alias research_mod_maoujou_pleading_forced_transfer forced_transfer
+  end
   alias research_mod_actor_label_jump actor_label_jump
   alias research_mod_command_122 command_122
   alias research_mod_command_117 command_117
@@ -5185,7 +5781,105 @@ class Game_Interpreter
     @index = indices.sample unless indices.empty?
   end
 
+  def command_102
+    if @research_mod_pleading_prepared
+      result = research_mod_maoujou_pleading_command_102
+      @research_mod_pleading_prepared = false
+      research_mod_restore_pleading_request_command
+      return result
+    end
+    pending_request_menu = @research_mod_pleading_request_menu
+    if !pending_request_menu && $game_temp
+      pending_request_menu = $game_temp.instance_variable_get(
+        :@research_mod_pleading_request_menu
+      ) == true
+    end
+    pending_request_menu ||= ResearchMod.maoujou_pleading_request_pending?
+    unless pending_request_menu
+      return research_mod_maoujou_pleading_command_102
+    end
+
+    original_params = @params
+    original_choices = (@params[0] || []).dup
+    prepared_refusal = original_choices.last.to_s == '拒绝'
+    original_choices = original_choices[0...-1] if prepared_refusal
+    @params = @params.dup
+    @params[0] = original_choices + ['拒绝']
+    # Reserve a separate cancel index so cancelling cannot select the refusal.
+    @params[1] = @params[0].size + 1
+    result = research_mod_maoujou_pleading_command_102
+    selected = @branch[@indent]
+    if selected == original_choices.size
+      # Select the original request branch and force its affection check to fail.
+      @branch[@indent] = 0
+      @research_mod_pleading_force_insufficient = true
+    elsif selected && selected < original_choices.size &&
+          original_choices[selected].to_s != 'やめる'
+      ResearchMod.set_maoujou_pleading_suppression(true)
+      @research_mod_pleading_force_success = true
+    else
+      @branch[@indent] = [original_choices.size - 1, 0].max
+    end
+    @research_mod_pleading_request_menu = false
+    ResearchMod.set_maoujou_pleading_request_pending(false)
+    $game_temp.instance_variable_set(:@research_mod_pleading_request_menu, false) if $game_temp
+    result
+  ensure
+    @params = original_params if original_params
+  end
+
   def command_111
+    pleading_mode = ResearchMod.maoujou_pleading_choice_mode
+    if pleading_mode && maoujou_pleading_affection_condition?
+      forced_result = pleading_mode == :success
+      ResearchMod.set_maoujou_pleading_suppression(true) if forced_result
+      ResearchMod.set_maoujou_pleading_choice_mode(nil)
+      ResearchMod.set_maoujou_pleading_request_pending(false)
+      $game_temp.instance_variable_set(:@research_mod_pleading_request_menu, false) if $game_temp
+      @research_mod_pleading_prepared = false
+      research_mod_restore_pleading_request_command
+      return maoujou_pleading_evaluate_condition(forced_result)
+    end
+    if @research_mod_pleading_force_insufficient && maoujou_pleading_affection_condition?
+      @research_mod_pleading_force_insufficient = false
+      return maoujou_pleading_evaluate_condition(false)
+    end
+
+    if @research_mod_pleading_force_success && maoujou_pleading_affection_condition?
+      @research_mod_pleading_force_success = false
+      return maoujou_pleading_evaluate_condition(true)
+    end
+
+    if ResearchMod.maoujou_pleading_request_pending? &&
+       maoujou_pleading_affection_condition?
+      parent_branch = @branch[@indent - 1]
+      choice_count = ResearchMod.maoujou_pleading_request_choice_count
+      if parent_branch && choice_count > 1
+        prepared_request = @research_mod_pleading_prepared
+        if prepared_request && parent_branch.to_i == 0
+          @research_mod_pleading_force_insufficient = true
+        elsif prepared_request && parent_branch.to_i < choice_count
+          @branch[@indent - 1] = parent_branch.to_i - 1
+          ResearchMod.set_maoujou_pleading_suppression(true)
+          @research_mod_pleading_force_success = true
+        elsif parent_branch.to_i < (choice_count - 1)
+          ResearchMod.set_maoujou_pleading_suppression(true)
+          @research_mod_pleading_force_success = true
+        end
+        ResearchMod.set_maoujou_pleading_request_pending(false)
+        $game_temp.instance_variable_set(:@research_mod_pleading_request_menu, false) if $game_temp
+        @research_mod_pleading_prepared = false if prepared_request
+        research_mod_restore_pleading_request_command
+        if @research_mod_pleading_force_insufficient
+          @research_mod_pleading_force_insufficient = false
+          return maoujou_pleading_evaluate_condition(false)
+        elsif @research_mod_pleading_force_success
+          @research_mod_pleading_force_success = false
+          return maoujou_pleading_evaluate_condition(true)
+        end
+      end
+    end
+
     if ResearchMod.all_dialogue_force_party? &&
        all_dialogue_actor_party_condition? &&
        all_dialogue_text_branch?(@index + 1)
@@ -5203,6 +5897,79 @@ class Game_Interpreter
     end
 
     research_mod_command_111
+  end
+
+  def execute_command
+    prepared_request = @research_mod_pleading_prepared &&
+                       @params && @params[0].is_a?(Array)
+    result = research_mod_pleading_execute_command
+    unless prepared_request
+      return result
+    end
+
+    selected = @branch[@indent] if @params && @params[0].is_a?(Array)
+    choice_count = ResearchMod.maoujou_pleading_request_choice_count
+    if selected && choice_count > 1
+      if selected.to_i == 0
+        @branch[@indent] = 0
+        @research_mod_pleading_force_insufficient = true
+      elsif selected.to_i < choice_count
+        @branch[@indent] = selected.to_i - 1
+        ResearchMod.set_maoujou_pleading_suppression(true)
+        @research_mod_pleading_force_success = true
+      else
+        @branch[@indent] = choice_count - 1
+      end
+    end
+    @research_mod_pleading_prepared = false
+    ResearchMod.set_maoujou_pleading_request_pending(false)
+    $game_temp.instance_variable_set(:@research_mod_pleading_request_menu, false) if $game_temp
+    research_mod_restore_pleading_request_command
+    result
+  end
+
+  def maoujou_pleading_affection_condition?
+    # Affection variables use the 3000-3999 range in the original events.
+    @params[0].to_i == 1 && (3000...4000).include?(@params[1].to_i)
+  end
+
+  def maoujou_pleading_evaluate_condition(result)
+    original_params = @params
+    @params = @params.dup
+    @params[3] = result ? 0 : 2_147_483_647
+    result_value = research_mod_command_111
+    result_value
+  ensure
+    @params = original_params if original_params
+  end
+
+  def command_137
+    return true if ResearchMod.maoujou_pleading_suppression?
+
+    research_mod_maoujou_pleading_command_137
+  end
+
+  def command_355
+    if ResearchMod.maoujou_pleading_suppression? &&
+       @params.to_s.include?('forced_transfer(154')
+      return true
+    end
+
+    research_mod_maoujou_pleading_command_355
+  end
+
+  def forced_transfer(map_id, x, y)
+    # Keep the actor on the current map during the modified pleading scene.
+    if ResearchMod.maoujou_pleading_suppression? && map_id.to_i == 154
+      return
+    end
+
+    if respond_to?(:research_mod_maoujou_pleading_forced_transfer)
+      research_mod_maoujou_pleading_forced_transfer(map_id, x, y)
+    else
+      $game_player.reserve_transfer(map_id, x, y)
+      $game_player.perform_transfer
+    end
   end
 
   def command_117
@@ -5258,6 +6025,8 @@ class Game_Interpreter
   end
 
   def move_actor_ex(actor_id = nil)
+    return if ResearchMod.maoujou_pleading_suppression?
+
     if actor_id.nil?
       # クレオ・アドラ
       return research_mod_move_actor_ex(695) if map_id == 103 && event_id == 36
@@ -5268,7 +6037,35 @@ class Game_Interpreter
     research_mod_move_actor_ex(actor_id)
   end
 
+  def move_actor(actor_id)
+    return if ResearchMod.maoujou_pleading_suppression?
+
+    research_mod_maoujou_pleading_move_actor(actor_id)
+  end
+
+  def release_temp_actors
+    return if ResearchMod.maoujou_pleading_suppression?
+
+    research_mod_maoujou_pleading_release_temp_actors
+  end
+
   def unlimited_choices(var_id, names)
+    pleading_menu_names = names.is_a?(Array) && names.any? do |name|
+      name.to_s.include?('おねだりする')
+    end
+    if pleading_menu_names
+      if ResearchMod.maoujou_pleading_request_pending? &&
+         !@research_mod_pleading_prepared
+        ResearchMod.set_maoujou_pleading_request_pending(false)
+        ResearchMod.set_maoujou_pleading_choice_mode(nil)
+        $game_temp.instance_variable_set(:@research_mod_pleading_request_menu, false) if $game_temp
+      end
+    end
+    if ResearchMod.maoujou_pleading_suppression? &&
+       names.include?('おねだりする') &&
+       ResearchMod.persona_dialogue_menu?(var_id, names)
+      ResearchMod.set_maoujou_pleading_suppression(false)
+    end
     event = $game_map.events[event_id] if $game_map && event_id > 0
     persona_ids = event ? event.research_mod_persona_ids : []
     candidate_entries = if ResearchMod.candidate_dialogue_view? &&
@@ -5290,10 +6087,13 @@ class Game_Interpreter
                    ResearchMod.persona_dialogue_menu?(var_id, names)
     gift_enabled = ResearchMod.maoujou_gift_dialogue_compatibility? &&
                    ResearchMod.persona_dialogue_menu?(var_id, names)
+    pleading_enabled = ResearchMod.maoujou_pleading_dialogue_compatibility? &&
+                       ResearchMod.persona_dialogue_menu?(var_id, names) &&
+                       names.include?('おねだりする')
     remove_candidate_enabled = ResearchMod.maoujou_remove_candidate_compatibility? &&
                                ResearchMod.persona_dialogue_menu?(var_id, names)
     dialogue_enabled = !candidate_entries.empty? || !ring_entries.empty?
-    unless persona_enabled || love_enabled || gift_enabled ||
+    unless persona_enabled || love_enabled || gift_enabled || pleading_enabled ||
            remove_candidate_enabled || dialogue_enabled
       return research_mod_unlimited_choices(var_id, names)
     end
@@ -5316,6 +6116,11 @@ class Game_Interpreter
       inserted_actions << [quit_index, :gift]
       quit_index += 1
     end
+    if pleading_enabled
+      choices.insert(quit_index, ResearchMod::RESEARCH_MAOUJOU_PLEADING_DIALOGUE_MENU_TEXT)
+      inserted_actions << [quit_index, :pleading]
+      quit_index += 1
+    end
     if remove_candidate_enabled
       choices.insert(quit_index, ResearchMod::RESEARCH_MAOUJOU_REMOVE_CANDIDATE_MENU_TEXT)
       inserted_actions << [quit_index, :remove_candidate]
@@ -5329,6 +6134,8 @@ class Game_Interpreter
 
     selected_index = $game_variables[var_id]
     selected_action = inserted_actions.find { |index, _action| selected_index == index }
+    if pleading_menu_names
+    end
     if selected_action
       action = selected_action[1]
       if action == :persona
@@ -5337,6 +6144,14 @@ class Game_Interpreter
         research_mod_choose_love
       elsif action == :gift
         research_mod_choose_gift
+      elsif action == :pleading
+        research_mod_prepare_pleading_request_command
+        ResearchMod.set_maoujou_pleading_choice_mode(nil)
+        @research_mod_pleading_request_menu = true
+        ResearchMod.set_maoujou_pleading_request_pending(true)
+        $game_temp.instance_variable_set(:@research_mod_pleading_request_menu, true) if $game_temp
+        $game_variables[var_id] = names.index('おねだりする') || names.size
+        return
       elsif action == :remove_candidate
         research_mod_remove_candidate
       else
@@ -5344,9 +6159,48 @@ class Game_Interpreter
       end
       $game_variables[var_id] = names.index("やめる") || names.size
     elsif selected_index
+      ResearchMod.set_maoujou_pleading_request_pending(false)
+      ResearchMod.set_maoujou_pleading_choice_mode(nil)
+      $game_temp.instance_variable_set(:@research_mod_pleading_request_menu, false) if $game_temp
+      research_mod_restore_pleading_request_command
       removed_count = inserted_actions.count { |index, _action| index < selected_index }
       $game_variables[var_id] = selected_index - removed_count
     end
+  end
+
+  def research_mod_prepare_pleading_request_command
+    return unless @list
+
+    command_index = ((@index.to_i + 1)...@list.size).find do |index|
+      @list[index].code == 102
+    end
+    return unless command_index
+
+    command = @list[command_index]
+    parameters = command.parameters
+    choices = parameters[0]
+    return unless choices.is_a?(Array)
+    original_choices = choices.reject { |choice| choice.to_s == '拒绝' }
+    @research_mod_pleading_command = command
+    @research_mod_pleading_original_choices = original_choices.dup
+    @research_mod_pleading_original_cancel = parameters[1]
+    parameters[0] = ['拒绝'] + original_choices
+    parameters[1] = parameters[0].size + 1
+    ResearchMod.set_maoujou_pleading_request_choice_count(original_choices.size)
+    @research_mod_pleading_prepared = true
+  end
+
+  def research_mod_restore_pleading_request_command
+    command = @research_mod_pleading_command
+    choices = @research_mod_pleading_original_choices
+    return unless command && choices
+
+    parameters = command.parameters
+    parameters[0] = choices.dup
+    parameters[1] = @research_mod_pleading_original_cancel
+    @research_mod_pleading_command = nil
+    @research_mod_pleading_original_choices = nil
+    @research_mod_pleading_original_cancel = nil
   end
 
   def research_mod_choose_persona(persona_ids)
@@ -5419,7 +6273,11 @@ class Game_Interpreter
     old_recipient = $game_variables[ResearchMod::RING_RECIPIENT_VARIABLE_ID]
     $game_message.instance_variable_set(:@research_mod_love_input_cancelable, true)
     $game_message.instance_variable_set(:@research_mod_love_input_cancelled, false)
-    $game_message.add(format('请输入%s的新好感度（0～9999999）：', actor.name))
+    $game_message.add(
+      format('请输入%s的新好感度（0～9999999）：', actor.name) + 10.chr +
+      '降低好感度后，即使再次升高，也不会重复获得已经领取过的礼物。' + 10.chr +
+      '已领取的礼物记录不会因好感度修改而重置。'
+    )
     $game_message.num_input_variable_id = ResearchMod::RING_RECIPIENT_VARIABLE_ID
     $game_message.num_input_digits_max = 7
     $game_variables[ResearchMod::RING_RECIPIENT_VARIABLE_ID] = actor.love.to_i
@@ -6068,11 +6926,23 @@ end
 
 class Game_Player
   alias research_mod_reflection_reserve_transfer reserve_transfer
+  alias research_mod_maoujou_pleading_perform_transfer perform_transfer
 
   def reserve_transfer(map_id, x, y, d = 2)
     return if ResearchMod.lose_event_preview_playing?
+    return if ResearchMod.maoujou_pleading_suppression? && map_id.to_i == 154
 
     research_mod_reflection_reserve_transfer(map_id, x, y, d)
+  end
+
+  def perform_transfer
+    # Block any already queued transfer to the underworld map during pleading.
+    if ResearchMod.maoujou_pleading_suppression? &&
+       instance_variable_get(:@new_map_id).to_i == 154
+      return
+    end
+
+    research_mod_maoujou_pleading_perform_transfer
   end
 end
 
@@ -6089,12 +6959,14 @@ class Window_ResearchModBattleEnemyDetail < Window_ResearchModBattleStatusBase
 
   def window_height
     item_lines = @enemy ? ResearchMod.enemy_help_item_lines_for(@enemy).size : 6
-    [fitting_height(8 + item_lines), Graphics.height - 16].min
+    follower_lines = @enemy ? ResearchMod.enemy_follower_help_lines(@enemy).size : 1
+    [fitting_height(8 + follower_lines + item_lines), Graphics.height - 16].min
   end
 
   def item_height
     item_lines = @enemy ? ResearchMod.enemy_help_item_lines_for(@enemy).size : 6
-    line_height * (8 + item_lines)
+    follower_lines = @enemy ? ResearchMod.enemy_follower_help_lines(@enemy).size : 1
+    line_height * (8 + follower_lines + item_lines)
   end
 
   def make_command_list
@@ -6125,6 +6997,7 @@ class Window_ResearchModBattleEnemyDetail < Window_ResearchModBattleStatusBase
      ResearchMod.enemy_steal_text(enemy, 2),
      ResearchMod.enemy_steal_text(enemy, 3),
      ResearchMod.enemy_steal_text(enemy, 4),
+     ResearchMod.enemy_follower_help_lines(enemy),
      ResearchMod.steal_always_success?,
      ResearchMod.drop_always_success?,
      enemy.states.map(&:id), buff_levels(enemy)]
@@ -6139,33 +7012,39 @@ class Window_ResearchModBattleEnemyDetail < Window_ResearchModBattleStatusBase
     change_color(normal_color)
     draw_text(rect.x, rect.y, rect.width, line_height,
               format('%d：%s', enemy.enemy_id, enemy.name), 0)
-    draw_text(rect.x, rect.y + line_height, rect.width, line_height,
+    follower_lines = ResearchMod.enemy_follower_help_lines(enemy)
+    follower_lines.each_with_index do |text, follower_index|
+      draw_text(rect.x, rect.y + line_height * (1 + follower_index),
+                rect.width, line_height, text, 0)
+    end
+    detail_offset = 1 + follower_lines.size
+    draw_text(rect.x, rect.y + line_height * detail_offset, rect.width, line_height,
               format('HP %s / %s　　MP %s / %s',
                      formatted_number(enemy.hp), formatted_number(enemy.mhp),
                      formatted_number(enemy.mp), formatted_number(enemy.mmp)), 0)
-    draw_text(rect.x, rect.y + line_height * 2, rect.width, line_height,
+    draw_text(rect.x, rect.y + line_height * (detail_offset + 1), rect.width, line_height,
               format('攻击 %s　防御 %s　魔力 %s',
                      formatted_number(enemy.atk), formatted_number(enemy.def),
                      formatted_number(enemy.mat)), 0)
-    draw_text(rect.x, rect.y + line_height * 3, rect.width, line_height,
+    draw_text(rect.x, rect.y + line_height * (detail_offset + 2), rect.width, line_height,
               format('精神 %s　灵巧 %s　速度 %s',
                      formatted_number(enemy.mdf), formatted_number(enemy.luk),
                      formatted_number(enemy.agi)), 0)
     battler_name = ResearchMod.enemy_battler_file_name(enemy)
     battler_name = '无' if battler_name.empty?
-    draw_text(rect.x, rect.y + line_height * 4, rect.width, line_height,
+    draw_text(rect.x, rect.y + line_height * (detail_offset + 3), rect.width, line_height,
               format('战斗图：%s', battler_name), 0)
-    draw_text(rect.x, rect.y + line_height * 5, rect.width, line_height,
+    draw_text(rect.x, rect.y + line_height * (detail_offset + 4), rect.width, line_height,
               format('状态：%s', state_text(enemy)), 0)
-    draw_text(rect.x, rect.y + line_height * 6, rect.width, line_height,
+    draw_text(rect.x, rect.y + line_height * (detail_offset + 5), rect.width, line_height,
               format('强化/弱化：%s', buff_text(enemy)), 0)
     cutin_names = ResearchMod.enemy_cutin_file_names(enemy)
     cutin_text = cutin_names.empty? ? '无' : cutin_names.join(', ')
-    draw_text(rect.x, rect.y + line_height * 7, rect.width, line_height,
+    draw_text(rect.x, rect.y + line_height * (detail_offset + 6), rect.width, line_height,
               format('技能Cut-in：%s', cutin_text), 0)
     item_lines = ResearchMod.enemy_help_item_lines_for(enemy)
     item_lines.each_with_index do |text, item_index|
-      draw_text(rect.x, rect.y + line_height * (8 + item_index), rect.width,
+      draw_text(rect.x, rect.y + line_height * (detail_offset + 7 + item_index), rect.width,
                 line_height, text, 0)
     end
   end
@@ -6945,6 +7824,7 @@ class Window_ResearchModBattleEditMain < Window_ResearchModBattleEditBase
     add_command('异常状态', :state)
     add_command('Buff', :buff)
     add_command('获取敌人物品', :enemy_items)
+    add_command('候补管理', :candidate_manage)
     add_command('返回', :cancel)
   end
 
@@ -6958,6 +7838,8 @@ class Window_ResearchModBattleEditMain < Window_ResearchModBattleEditBase
              '赋予当前战斗中敌我成员的增益效果，不消耗回合。'
            when :enemy_items
              '选择当前战斗中的敌人，然后查看并获取其掉落和可偷物品。'
+           when :candidate_manage
+             '选择当前战斗中的敌人，然后管理其对应角色的候补状态。'
            else
              '返回战斗队伍指令菜单。'
            end
@@ -7327,6 +8209,7 @@ class Window_PartyCommand < Window_Command
     add_command('战斗对白模拟', :research_battle_dialogue) if ResearchMod.manual_enemy_dialogue?
     add_command('战斗记录', :research_battle_record) if ResearchMod.battle_record_enabled?
     add_command('战斗修改', :research_battle_edit) if ResearchMod.battle_editor_enabled?
+    add_command('强制胜利', :research_force_victory) if ResearchMod.force_victory_enabled?
   end
 end
 
@@ -7338,6 +8221,7 @@ class Scene_Battle < Scene_Base
   alias research_mod_battle_record_battle_start battle_start
 
   def battle_start
+    @research_mod_force_victory_pending = false
     ResearchMod.clear_battle_records
     ResearchMod.clear_battle_temptation if ResearchMod.temptation_immunity?
     research_mod_battle_record_battle_start
@@ -7357,6 +8241,26 @@ class Scene_Battle < Scene_Base
                                       method(:open_research_mod_battle_dialogue))
     @party_command_window.set_handler(:research_battle_edit,
                                       method(:open_research_mod_battle_edit))
+    @party_command_window.set_handler(:research_force_victory,
+                                      method(:process_research_mod_force_victory))
+  end
+
+  def process_research_mod_force_victory
+    @party_command_window.deactivate
+    @party_command_window.close
+    @info_viewport.visible = false if @info_viewport
+    if $game_troop
+      $game_troop.members.each do |enemy|
+        next unless enemy && enemy.exist? && !enemy.all_dead?
+
+        # Set the defeated state without scheduling revival or forced actions.
+        enemy.hp = 0
+        enemy.clear_states if enemy.respond_to?(:clear_states)
+        enemy.clear_buffs if enemy.respond_to?(:clear_buffs)
+        enemy.refresh if enemy.respond_to?(:refresh)
+      end
+    end
+    @research_mod_force_victory_pending = true
   end
 
   alias research_mod_audio_overlay_start start
@@ -7560,6 +8464,9 @@ class Scene_Battle < Scene_Base
       :enemy_items, method(:open_research_mod_battle_edit_enemy_items)
     )
     @research_mod_battle_edit_main_window.set_handler(
+      :candidate_manage, method(:open_research_mod_battle_edit_candidate_manage)
+    )
+    @research_mod_battle_edit_main_window.set_handler(
       :cancel, method(:close_research_mod_battle_edit)
     )
     @research_mod_battle_edit_state_window =
@@ -7607,6 +8514,15 @@ class Scene_Battle < Scene_Base
     @research_mod_battle_edit_enemy_item_target_window.set_handler(
       :cancel, method(:close_research_mod_battle_edit_enemy_item_targets)
     )
+    @research_mod_battle_edit_candidate_target_window =
+      Window_ResearchModBattleEditCandidateTarget.new(@research_mod_battle_edit_help_window)
+    @research_mod_battle_edit_candidate_target_window.set_handler(
+      :select, method(:select_research_mod_battle_edit_candidate_target)
+    )
+    @research_mod_battle_edit_candidate_target_window.set_handler(
+      :cancel, method(:close_research_mod_battle_edit_candidate_targets)
+    )
+    @research_mod_battle_edit_candidate_window = nil
     @research_mod_battle_edit_enemy_item_list_window = nil
     @research_mod_battle_edit_enemy_item_quantity_window = nil
     @research_mod_battle_edit_enemy_item_target_entries = nil
@@ -8912,6 +9828,103 @@ class Scene_Battle < Scene_Base
     )
   end
 
+  def open_research_mod_battle_edit_candidate_manage
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_main_window)
+    @research_mod_battle_edit_candidate_target_window.setup(
+      research_mod_visible_enemies
+    )
+  end
+
+  def select_research_mod_battle_edit_candidate_target
+    enemy = @research_mod_battle_edit_candidate_target_window.current_ext
+    actor = ResearchMod.enemy_follower_actor(enemy)
+    unless actor
+      Sound.play_buzzer
+      @research_mod_battle_edit_candidate_target_window.activate
+      return
+    end
+
+    @research_mod_battle_edit_candidate_actor = actor
+    hide_research_mod_battle_edit_window(
+      @research_mod_battle_edit_candidate_target_window
+    )
+    @research_mod_battle_edit_candidate_window =
+      Window_ResearchModActorCandidateManage.new(actor)
+    @research_mod_battle_edit_candidate_window.set_handler(
+      :add, method(:add_research_mod_battle_edit_candidate)
+    )
+    @research_mod_battle_edit_candidate_window.set_handler(
+      :remove, method(:remove_research_mod_battle_edit_candidate)
+    )
+    @research_mod_battle_edit_candidate_window.set_handler(
+      :cancel, method(:close_research_mod_battle_edit_candidate)
+    )
+  end
+
+  def research_mod_battle_edit_candidate_actor
+    @research_mod_battle_edit_candidate_actor
+  end
+
+  def add_research_mod_battle_edit_candidate
+    actor = research_mod_battle_edit_candidate_actor
+    if actor && $game_party && $game_party.respond_to?(:follow?) &&
+       !$game_party.follow?(actor.id)
+      $game_party.add_stand_actor(actor.id)
+      word = research_mod_battle_edit_candidate_word(actor, :yes)
+      return play_research_mod_battle_edit_candidate_word(word) if word
+    end
+    close_research_mod_battle_edit_candidate
+  rescue => error
+    close_research_mod_battle_edit_candidate
+  end
+
+  def remove_research_mod_battle_edit_candidate
+    actor = research_mod_battle_edit_candidate_actor
+    if actor && $game_party && $game_party.respond_to?(:stand_actors) &&
+       $game_party.stand_actors.include?(actor.id)
+      $game_party.remove_stand_actor(actor.id)
+      ResearchMod.mark_removed_candidate_actor(actor.id)
+      word = research_mod_battle_edit_candidate_word(actor, :no)
+      return play_research_mod_battle_edit_candidate_word(word) if word
+    end
+    close_research_mod_battle_edit_candidate
+  rescue => error
+    close_research_mod_battle_edit_candidate
+  end
+
+  def research_mod_battle_edit_candidate_word(actor, key)
+    ResearchMod.follower_dialogue_word(actor, key)
+  end
+
+  def play_research_mod_battle_edit_candidate_word(word)
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_candidate_window)
+    @research_mod_battle_edit_help_window.hide
+    word.execute
+    wait_for_message
+    close_research_mod_battle_edit_candidate
+  rescue => error
+    close_research_mod_battle_edit_candidate
+  end
+
+  def close_research_mod_battle_edit_candidate
+    defer_research_mod_window_dispose(@research_mod_battle_edit_candidate_window)
+    @research_mod_battle_edit_candidate_window = nil
+    @research_mod_battle_edit_candidate_actor = nil
+    @research_mod_battle_edit_help_window.show
+    @research_mod_battle_edit_candidate_target_window.refresh
+    @research_mod_battle_edit_candidate_target_window.show
+    @research_mod_battle_edit_candidate_target_window.activate
+    @research_mod_battle_edit_candidate_target_window.update_help
+  end
+
+  def close_research_mod_battle_edit_candidate_targets
+    hide_research_mod_battle_edit_window(
+      @research_mod_battle_edit_candidate_target_window
+    )
+    @research_mod_battle_edit_candidate_actor = nil
+    @research_mod_battle_edit_main_window.open_window
+  end
+
   def select_research_mod_battle_edit_enemy_item_target
     enemy = @research_mod_battle_edit_enemy_item_target_window.current_ext
     unless enemy
@@ -9221,6 +10234,10 @@ class Scene_Battle < Scene_Base
     dispose_research_mod_battle_deferred_windows
     update_research_mod_audio_overlay
     research_mod_enemy_status_update
+    if @research_mod_force_victory_pending && !scene_changing?
+      @research_mod_force_victory_pending = false
+      BattleManager.judge_win_loss
+    end
     update_research_mod_enemy_status
     update_research_mod_party_status
     update_research_mod_battle_cutin_preview
@@ -9311,6 +10328,8 @@ class Scene_Battle < Scene_Base
                @research_mod_battle_edit_buff_window,
                @research_mod_battle_edit_target_window,
                @research_mod_battle_edit_enemy_item_target_window,
+               @research_mod_battle_edit_candidate_target_window,
+               @research_mod_battle_edit_candidate_window,
                @research_mod_battle_edit_enemy_item_list_window,
                @research_mod_battle_edit_enemy_item_quantity_window,
                @research_mod_battle_edit_confirm_window,
@@ -9346,6 +10365,8 @@ class Scene_Battle < Scene_Base
     @research_mod_battle_edit_buff_window = nil
     @research_mod_battle_edit_target_window = nil
     @research_mod_battle_edit_enemy_item_target_window = nil
+    @research_mod_battle_edit_candidate_target_window = nil
+    @research_mod_battle_edit_candidate_window = nil
     @research_mod_battle_edit_enemy_item_list_window = nil
     @research_mod_battle_edit_enemy_item_quantity_window = nil
     @research_mod_battle_edit_enemy_item_target_entries = nil
@@ -9357,6 +10378,7 @@ class Scene_Battle < Scene_Base
     @research_mod_battle_edit_talk_enemy_window = nil
     @research_mod_battle_edit_talk_list_window = nil
     @research_mod_battle_edit_talk_choice_window = nil
+    @research_mod_force_victory_pending = false
     research_mod_enemy_status_terminate
   end
 end
@@ -9512,7 +10534,9 @@ class Window_ResearchModCommand < Window_Command
     add_command(format('修改当前人物好感度：%d', @actor.love), :love)
     add_command('修改当前角色永久属性加成', :actor_params)
     add_command('切换当前角色形态', :persona, !ResearchMod.persona_entries(@actor).empty?)
-    add_command('学习当前角色妖术', :learning, !ResearchMod.learning_skills.empty?)
+    add_command('当前角色学习妖术', :learning, !ResearchMod.learning_skills.empty?)
+    add_command('当前角色学习技能', :all_skill_learning)
+    add_command('当前角色学习能力', :ability_learning)
     add_command('切换当前角色职业', :class)
     add_command('切换当前角色种族', :tribe)
     add_command('当前角色全职全种', :unlock_all)
@@ -9530,7 +10554,8 @@ class Window_ResearchModCommand < Window_Command
     add_command('魔王城形态变化（无视事件）：' + (ResearchMod.persona_dialogue_compatibility? ? '已开启' : '已关闭'), :persona_dialogue)
     add_command('魔王城好感度修改：' + (ResearchMod.love_dialogue_compatibility? ? '已开启' : '已关闭'), :love_dialogue)
     add_command('魔王城赠送礼物改：' + (ResearchMod.maoujou_gift_dialogue_compatibility? ? '已开启' : '已关闭'), :maoujou_gift_dialogue)
-    add_command('移出候补：' + (ResearchMod.maoujou_remove_candidate_compatibility? ? '已开启' : '已关闭'), :maoujou_remove_candidate)
+    add_command('魔王城撒娇改：' + (ResearchMod.maoujou_pleading_dialogue_compatibility? ? '已开启' : '已关闭'), :maoujou_pleading_dialogue)
+    add_command('魔王城移除候补：' + (ResearchMod.maoujou_remove_candidate_compatibility? ? '已开启' : '已关闭'), :maoujou_remove_candidate)
     add_command('---------- 查看与资源（修改） ----------', :separator, false)
     add_command('角色图鉴', :actor_encyclopedia)
     add_command('开关与变量修改', :debug_database)
@@ -9552,6 +10577,7 @@ class Window_ResearchModCommand < Window_Command
     add_command('显示战斗记录：' + (ResearchMod.battle_record_enabled? ? '已开启' : '已关闭'), :battle_record)
     add_command('显示对白模拟：' + (ResearchMod.manual_enemy_dialogue? ? '已开启' : '已关闭'), :manual_enemy_dialogue)
     add_command('显示战斗修改菜单：' + (ResearchMod.battle_editor_enabled? ? '已开启' : '已关闭'), :battle_editor)
+    add_command('战斗强制胜利：' + (ResearchMod.force_victory_enabled? ? '已开启' : '已关闭'), :force_victory)
     add_command('---------- 消耗 ----------', :separator, false)
     add_command('消耗类技能开关', :consumption)
     add_command('无消耗料理', :free_cooking)
@@ -9606,6 +10632,7 @@ class Window_ResearchModCommand < Window_Command
                       ResearchMod::CHEST_MONSTER_ICON_DEFAULT,
                       ResearchMod::CHEST_ITEM_ICON_VARIABLE_ID,
                       ResearchMod::CHEST_ITEM_ICON_DEFAULT) + 10.chr +
+               '已处理的容器保留原图标，并在右下角叠加绿色勾；' + 10.chr +
                '可在“开关与变量修改”中改图标ID；动态容器不显示。'
            when :party_edit_actor_id
              ResearchMod::PARTY_EDIT_ACTOR_ID_HELP_TEXT
@@ -9627,7 +10654,7 @@ class Window_ResearchModCommand < Window_Command
            when :all_dialogue
              '开启后，可浏览角色的默认、戒指及队友相关对话；' + 10.chr + '实际对话判定也会无视角色是否在队伍或候补。' + 10.chr + '对话浏览本身不执行事件效果，' + 10.chr + '但无视入队条件可能改变实际事件的对话分支。'
            when :maoujou_remove_candidate
-             '开启后，在魔王城人物对话菜单中加入移出候补。' + 10.chr +
+             '开启后，在魔王城人物对话菜单中加入“魔王城移除候补”。' + 10.chr +
                '选择后会二次确认，并将当前说话角色移出候补名单。' + 10.chr +
                '移除后会播放原版拒绝入队台词；操作可能导致剧情卡关，请谨慎使用。'
            when :steal_success
@@ -9667,6 +10694,9 @@ class Window_ResearchModCommand < Window_Command
              '开启后，可在战斗菜单查看双方技能台词、' + 10.chr + '效果反应，并手动组合释放者与目标对白。'
            when :battle_editor
              '开启后，战斗队伍指令增加“战斗修改”，' + 10.chr + '增加如强制赋予或解除敵我成员的诱惑状态等功能'
+           when :force_victory
+             '开启后，战斗队伍指令增加“强制胜利”。' + 10.chr +
+               '选择后直接执行原版胜利结算，包含战斗结束事件、经验、金钱、掉落和入队处理。'
            when :audio_overlay
              '开启后，地图和战斗右上角持续显示当前BGM与BGS文件名；' + 10.chr + '音乐变化时自动刷新。'
            when :value_editor
@@ -9693,10 +10723,21 @@ class Window_ResearchModCommand < Window_Command
              '开启后，在魔王城人物对话菜单中加入赠送礼物改。' + 10.chr +
                '礼物窗口显示物品ID和好感度变化。' + 10.chr +
                '赠送无视持有状态，不扣物品；查看只播放对应对白。'
+           when :maoujou_pleading_dialogue
+             '开启后，在魔王城人物对话菜单中加入魔王城撒娇改。' + 10.chr +
+               '选择撒娇可播放原版场景，另有拒绝选项。' + 10.chr +
+               '场景中不传送到地图154（冥府），也不执行並び替え（排序）禁止等事件。'
            when :separator
              '使用上下键移动；分割线不可操作。'
            when :actor
              '切换当前角色后，下面的当前角色修改项目会作用于新角色。'
+           when :all_skill_learning
+             '从数据库全部普通技能中选择技能并学习或忘记。' + 10.chr +
+               '先选择武技、魔法、职技、魔物技或其他技能，再选择具体技能分类。' + 10.chr +
+               '技能列表不受职业或种族学习记录限制；能力类技能暂不包含。'
+           when :ability_learning
+             '从能力分类中选择能力并学习或忘记。' + 10.chr +
+               '能力分类按照战技、职技、魔法、防御、特殊和大师能力划分。'
            when :cancel
              '返回游戏菜单。'
            else
@@ -10161,6 +11202,65 @@ class Window_ResearchModBattleEditEnemyItemTarget < Window_ResearchModBattleEdit
         format('敌人ID %d  %s', enemy.enemy_id, enemy.name) + 10.chr +
         format('可获取物品：%d种；确认后进入物品列表。', entries.size)
       )
+    else
+      help_window.set_text('返回战斗修改菜单。')
+    end
+  end
+end
+
+class Window_ResearchModBattleEditCandidateTarget < Window_ResearchModBattleEditBase
+  def initialize(help_window)
+    @enemies = []
+    super(help_window)
+  end
+
+  def setup(enemies)
+    @enemies = Array(enemies).compact
+    self.height = window_height
+    self.y = [(@research_mod_help_window.y - height) / 2, 0].max
+    refresh
+    open_window
+  end
+
+  def window_height
+    [fitting_height([@enemies.size + 1, 2].max),
+     Graphics.height - @research_mod_help_window.height].min
+  end
+
+  def window_width
+    Graphics.width - 16
+  end
+
+  def make_command_list
+    @enemies.each do |enemy|
+      actor = ResearchMod.enemy_follower_actor(enemy)
+      actor_name = actor ? actor.name : '无对应角色'
+      joined = actor && $game_party && $game_party.respond_to?(:follow?) &&
+               $game_party.follow?(actor.id)
+      status = actor ? (joined ? '是' : '否') : '不适用'
+      label = format('%4d  %s　→　%s　%s', enemy.enemy_id, enemy.name,
+                     actor ? format('%d %s', actor.id, actor_name) : actor_name,
+                     status)
+      add_command(label, :select, !actor.nil?, enemy)
+    end
+    add_command('返回战斗修改菜单', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    enemy = current_ext
+    actor = enemy && ResearchMod.enemy_follower_actor(enemy)
+    if enemy && current_symbol == :select && actor
+      joined = $game_party && $game_party.respond_to?(:follow?) &&
+               $game_party.follow?(actor.id)
+      status = joined ? '是' : '否'
+      help_window.set_text(
+        format('敌人ID %d  %s', enemy.enemy_id, enemy.name) + 10.chr +
+        format('对应角色：%d %s　已加入：%s', actor.id, actor.name, status)
+      )
+    elsif enemy && current_symbol == :select
+      help_window.set_text('该敌人没有对应角色，无法管理候补。')
     else
       help_window.set_text('返回战斗修改菜单。')
     end
@@ -10945,7 +12045,7 @@ class Window_ResearchModBattleList < Window_Command
   end
 
   def window_height
-    Graphics.height - fitting_height(9)
+    Graphics.height - fitting_height(ResearchMod::CUSTOM_BATTLE_HELP_LINES)
   end
 
   def col_max
@@ -10991,6 +12091,7 @@ class Window_ResearchModBattleList < Window_Command
   def entry_help_text(entry)
     if @kind == :enemy
       lines = [format('敌人ID %d  %s', entry.id, entry.name)]
+      lines.concat(ResearchMod.enemy_follower_help_lines(entry))
       lines.concat(ResearchMod.enemy_help_item_lines_for(entry))
       lines.join(10.chr)
     else
@@ -12488,8 +13589,8 @@ class Window_ResearchModEnemyItemList < Window_Command
   end
 
   def window_height
-    # Keep the item list above the nine-line battle help window.
-    Graphics.height - fitting_height(9)
+    # Keep the item list above the custom battle help window.
+    Graphics.height - fitting_height(ResearchMod::CUSTOM_BATTLE_HELP_LINES)
   end
 
   def make_command_list
@@ -12547,9 +13648,11 @@ end
 class Window_ResearchModEnemyBattleMode < Window_Command
   attr_reader :troops
   attr_reader :item_entries
+  attr_reader :follower_actor
 
   def initialize(enemy, help_window)
     @enemy = enemy
+    @follower_actor = ResearchMod.enemy_follower_actor(enemy)
     @troops = ResearchMod.troops_for_enemy(enemy.id)
     @item_entries = ResearchMod.enemy_item_entries(enemy)
     super(0, 0)
@@ -12564,13 +13667,19 @@ class Window_ResearchModEnemyBattleMode < Window_Command
   end
 
   def visible_line_number
-    4
+    @follower_actor ? 5 : 4
   end
 
   def make_command_list
     add_command('使用原有敌群挑战（推荐）', :original, !@troops.empty?)
     add_command('单独挑战该敌人（实验性）', :temporary)
     add_command('获取敌人物品', :enemy_items, !@item_entries.empty?)
+    if @follower_actor
+      joined = $game_party && $game_party.respond_to?(:follow?) &&
+               $game_party.follow?(@follower_actor.id)
+      status = joined ? '是' : '否'
+      add_command(format('候补管理（已加入：%s）', status), :candidate_manage)
+    end
     add_command('返回', :cancel)
   end
 
@@ -12584,6 +13693,8 @@ class Window_ResearchModEnemyBattleMode < Window_Command
              '创建无战斗事件的临时单人敌群；剧情敌人可能异常。'
            when :enemy_items
              format('查看该敌人的掉落和可偷物品，共%d种去重物品；可全部或单独获取。', @item_entries.size)
+           when :candidate_manage
+             '管理该敌人对应角色的候补状态；可加入或移除候补。'
            else
              '返回敌人列表。'
            end
@@ -12604,8 +13715,8 @@ class Window_ResearchModEnemyTroopList < Window_Command
   end
 
   def window_height
-    # Keep the troop list above the nine-line battle help window.
-    Graphics.height - fitting_height(9)
+    # Keep the troop list above the custom battle help window.
+    Graphics.height - fitting_height(ResearchMod::CUSTOM_BATTLE_HELP_LINES)
   end
 
   def col_max
@@ -12676,14 +13787,124 @@ class Window_ResearchModBattleConfirm < Window_Command
   end
 end
 
-class Window_ResearchModClassList < Window_Command
-  def initialize(kind)
+class Window_ResearchModClassLearningHelp < Window_Selectable
+  attr_reader :page
+
+  def initialize(x, y, width, height)
+    @lines = []
+    @pages = [[]]
+    @page = 0
+    @entry_pages_cache = {}
+    @entry_key = nil
+    super(x, y, width, height)
+    self.active = false
+    refresh
+  end
+
+  def item_max
+    0
+  end
+
+  def update_cursor
+    cursor_rect.empty
+  end
+
+  def set_entry(entry, kind)
+    cache_key = if entry
+                  [kind, entry.id, contents_width, contents_height]
+                else
+                  [kind, 0, contents_width, contents_height]
+                end
+    return if @entry_key == cache_key
+
+    @entry = entry
     @kind = kind
+    @entry_key = cache_key
+    @pages = @entry_pages_cache[cache_key]
+    unless @pages
+      @lines = wrap_lines(ResearchMod.class_learning_lines(entry, kind))
+      rebuild_pages
+      @entry_pages_cache[cache_key] = @pages
+    end
+    @page = 0
+    refresh
+  end
+
+  def set_text(text)
+    @entry = nil
+    @kind = nil
+    @entry_key = nil
+    @lines = wrap_lines(text.to_s.split(/\r?\n/, -1))
+    @page = 0
+    rebuild_pages
+    refresh
+  end
+
+  def scroll_page(delta)
+    return false if @pages.empty? || @pages.size <= 1
+
+    target = [[@page + delta.to_i, 0].max, @pages.size - 1].min
+    return false if target == @page
+
+    @page = target
+    refresh
+    true
+  end
+
+  def refresh
+    contents.clear
+    footer = format('页面 %d/%d　左右键翻页', @page + 1, @pages.size)
+    draw_text(0, 0, contents_width, line_height, footer, 2)
+    page_lines = @pages[@page] || []
+    page_lines.each_with_index do |line, index|
+      draw_text(0, (index + 2) * line_height, contents_width, line_height,
+                line.to_s)
+    end
+  end
+
+  private
+
+  def wrap_lines(lines)
+    result = []
+    lines.each do |line|
+      current = ''
+      line.to_s.each_char do |character|
+        candidate = current + character
+        if !current.empty? && text_size(candidate).width > contents_width
+          result << current
+          current = character
+        else
+          current = candidate
+        end
+      end
+      result << current
+    end
+    result.empty? ? [''] : result
+  end
+
+  def rebuild_pages
+    lines_per_page = [contents_height / line_height - 2, 1].max
+    @pages = @lines.each_slice(lines_per_page).to_a
+    @pages = [[]] if @pages.empty?
+    @page = [[@page, 0].max, @pages.size - 1].min
+  end
+end
+
+class Window_ResearchModClassList < Window_Command
+  alias research_mod_class_list_select select
+
+  def initialize(kind, learning_help_window = nil)
+    @kind = kind
+    @learning_help_window = learning_help_window
     super(0, 0)
   end
 
   def window_width
-    Graphics.width
+    ResearchMod.class_learning_half_width
+  end
+
+  def window_height
+    Graphics.height
   end
 
   def visible_line_number
@@ -12693,6 +13914,29 @@ class Window_ResearchModClassList < Window_Command
   def make_command_list
     ResearchMod.entries(@kind).each do |entry|
       add_command(format('%4d  %s', entry.id, entry.name), :select, true, entry.id)
+    end
+  end
+
+  def select(index)
+    research_mod_class_list_select(index)
+    update_class_learning_help
+  end
+
+  def update_class_learning_help
+    return unless @learning_help_window && !@learning_help_window.disposed?
+
+    entry = $data_classes[current_ext] if current_ext
+    @learning_help_window.set_entry(entry, @kind)
+  end
+
+  def update
+    super
+    return unless active
+
+    if Input.trigger?(:RIGHT) || Input.trigger?(:R)
+      @learning_help_window.scroll_page(1) if @learning_help_window
+    elsif Input.trigger?(:LEFT) || Input.trigger?(:L)
+      @learning_help_window.scroll_page(-1) if @learning_help_window
     end
   end
 end
@@ -12767,6 +14011,548 @@ class Window_ResearchModLearningList < Window_Command
       add_command(format('%4d  %s%s', skill.id, skill.name, suffix), :select,
                   learnable && !learned, skill.id)
     end
+  end
+end
+
+class Window_ResearchModAllSkillCategory < Window_Command
+  def initialize
+    super(0, 0)
+    self.z = 420
+    hide
+    deactivate
+    unselect
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def visible_line_number
+    8
+  end
+
+  def make_command_list
+    ResearchMod.all_skill_categories.each do |category|
+      add_command(category[:label], :select, true, category)
+    end
+    add_command('返回', :cancel)
+  end
+end
+
+class Window_ResearchModAllSkillType < Window_Command
+  def initialize
+    @category = nil
+    super(0, 0)
+    self.z = 425
+    hide
+    deactivate
+    unselect
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def visible_line_number
+    20
+  end
+
+  def setup(category)
+    @category = category
+    refresh
+    select(0)
+  end
+
+  def make_command_list
+    ResearchMod.all_skill_type_entries(@category).each do |entry|
+      add_command(format('%2d  %s', entry[:type_id], entry[:name]),
+                  :select, true, entry)
+    end
+    add_command('返回', :cancel)
+  end
+end
+
+class Window_ResearchModAllSkillHelp < Window_Selectable
+  attr_reader :page
+
+  def initialize(x, y, width, height)
+    @pages = [[]]
+    @page = 0
+    @skill_key = nil
+    super(x, y, width, height)
+    self.active = false
+    refresh
+  end
+
+  def item_max
+    0
+  end
+
+  def update_cursor
+    cursor_rect.empty
+  end
+
+  # The skill list updates this help window explicitly after its contents are
+  # initialized; do not use Window_Selectable's default help callback.
+  def update_help
+  end
+
+  def set_skill(skill, type_id)
+    learned = skill && @current_actor &&
+              ResearchMod.all_skill_learning_status(@current_actor, skill)
+    key = skill ? [skill.id, type_id, learned, contents_width, contents_height] : nil
+    return if key == @skill_key
+
+    @skill_key = key
+    lines = if skill
+              description = skill.respond_to?(:description) ?
+                skill.description.to_s.gsub(92.chr + 'n', 10.chr) : ''
+              result = [format('技能 ID：%d', skill.id),
+                        format('名称：%s', skill.name.to_s),
+                        format('所属：%s', ResearchMod.all_skill_type_label(type_id)),
+                        '说明：']
+              result.concat(description.split(/\r?\n/, -1)) unless description.empty?
+              result << format('状态：%s', learned ? '已学习' : '未学习')
+              result
+            else
+              ['请选择技能。']
+            end
+    @pages = build_pages(wrap_lines(lines))
+    @page = 0
+    refresh
+  end
+
+  def actor=(actor)
+    @current_actor = actor
+  end
+
+  def scroll_page(delta)
+    return false if @pages.size <= 1
+
+    target = [[@page + delta.to_i, 0].max, @pages.size - 1].min
+    return false if target == @page
+
+    @page = target
+    refresh
+    true
+  end
+
+  def refresh
+    contents.clear
+    footer = format('页面 %d/%d　左右键翻页', @page + 1, @pages.size)
+    draw_text(0, 0, contents_width, line_height, footer, 2)
+    (@pages[@page] || []).each_with_index do |line, index|
+      draw_text(0, (index + 2) * line_height, contents_width, line_height,
+                line.to_s)
+    end
+  end
+
+  private
+
+  def wrap_lines(lines)
+    result = []
+    lines.each do |line|
+      current = ''
+      line.to_s.each_char do |character|
+        candidate = current + character
+        if !current.empty? && text_size(candidate).width > contents_width
+          result << current
+          current = character
+        else
+          current = candidate
+        end
+      end
+      result << current
+    end
+    result.empty? ? [''] : result
+  end
+
+  def build_pages(lines)
+    per_page = [contents_height / line_height - 2, 1].max
+    pages = lines.each_slice(per_page).to_a
+    pages.empty? ? [[]] : pages
+  end
+end
+
+class Window_ResearchModAllSkillList < Window_Command
+  alias research_mod_all_skill_list_select select
+
+  def initialize(actor, help_window)
+    @actor = actor
+    @type_id = nil
+    @entries = []
+    @help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    self.z = 430
+    hide
+    deactivate
+    unselect
+  end
+
+  def window_width
+    ResearchMod.class_learning_half_width
+  end
+
+  def window_height
+    Graphics.height
+  end
+
+  def setup(type_id)
+    @type_id = type_id.to_i
+    @entries = ResearchMod.all_skill_entries(@type_id)
+    refresh
+    select(0)
+    update_all_skill_help
+  end
+
+  def make_command_list
+    can_learn_all = @entries.any? do |skill|
+      !ResearchMod.all_skill_learning_status(@actor, skill) &&
+        (!@actor.respond_to?(:skill_learnable?) || @actor.skill_learnable?(skill))
+    end
+    can_forget_all = @entries.any? do |skill|
+      ResearchMod.all_skill_learning_status(@actor, skill)
+    end
+    add_command('全部学习', :learn_all, can_learn_all)
+    add_command('全部忘记', :forget_all, can_forget_all)
+    @entries.each do |skill|
+      learned = ResearchMod.all_skill_learning_status(@actor, skill)
+      suffix = learned ? '（已学习）' : ''
+      add_command(format('%4d  %s%s', skill.id, skill.name.to_s, suffix),
+                  :select, true, skill)
+    end
+    add_command('返回', :cancel)
+  end
+
+  def select(index)
+    research_mod_all_skill_list_select(index)
+    update_all_skill_help
+  end
+
+  def update_all_skill_help
+    return unless @help_window && !@help_window.disposed?
+
+    @help_window.actor = @actor if @help_window.respond_to?(:actor=)
+    @help_window.set_skill(current_ext, @type_id)
+  end
+
+  # Replace the default callback, which expects a Window_Help instance and
+  # calls clear/set_text directly on it.
+  def update_help
+    update_all_skill_help
+  end
+
+  def update
+    super
+    return unless active
+
+    if Input.trigger?(:RIGHT) || Input.trigger?(:R)
+      @help_window.scroll_page(1) if @help_window
+    elsif Input.trigger?(:LEFT) || Input.trigger?(:L)
+      @help_window.scroll_page(-1) if @help_window
+    end
+  end
+end
+
+class Window_ResearchModAllSkillAction < Window_Command
+  def initialize(actor, skill, type_id, help_window)
+    @actor = actor
+    @skill = skill
+    @type_id = type_id
+    @help_window = help_window
+    super(0, 0)
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - height) / 2
+    self.z = 500
+  end
+
+  def setup(skill)
+    @skill = skill
+    refresh
+    select(0)
+  end
+
+  def window_width
+    360
+  end
+
+  def visible_line_number
+    3
+  end
+
+  def make_command_list
+    learned = ResearchMod.all_skill_learning_status(@actor, @skill)
+    learnable = if @actor.respond_to?(:skill_learnable?)
+                  @actor.skill_learnable?(@skill)
+                else
+                  true
+                end
+    add_command('学习', :learn, !learned && learnable)
+    add_command('忘记', :forget, learned)
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    @help_window.set_skill(@skill, @type_id) if @help_window
+  end
+end
+
+class Window_ResearchModAbilityCategory < Window_Command
+  def initialize
+    super(0, 0)
+    self.z = 420
+    hide
+    deactivate
+    unselect
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def visible_line_number
+    8
+  end
+
+  def make_command_list
+    ResearchMod.ability_type_entries.each do |entry|
+      label = format('%s（%s）', entry[:name], entry[:translated_name])
+      add_command(label, :select, true, entry)
+    end
+    add_command('返回', :cancel)
+  end
+end
+
+class Window_ResearchModAbilityHelp < Window_Selectable
+  attr_reader :page
+
+  def initialize(x, y, width, height)
+    @pages = [[]]
+    @page = 0
+    @ability_key = nil
+    @current_actor = nil
+    super(x, y, width, height)
+    self.active = false
+    refresh
+  end
+
+  def item_max
+    0
+  end
+
+  def update_cursor
+    cursor_rect.empty
+  end
+
+  # The ability list refreshes this custom help window explicitly.
+  def update_help
+  end
+
+  def actor=(actor)
+    @current_actor = actor
+  end
+
+  def set_ability(ability, stype_id)
+    learned = ability && @current_actor &&
+              ResearchMod.ability_learning_status(@current_actor, ability)
+    key = ability ? [ability.id, stype_id, learned, contents_width, contents_height] : nil
+    return if key == @ability_key
+
+    @ability_key = key
+    lines = if ability
+              description = ability.respond_to?(:description) ?
+                ability.description.to_s.gsub(92.chr + 'n', 10.chr) : ''
+              result = [format('能力 ID：%d', ability.id),
+                        format('名称：%s', ability.name.to_s),
+                        format('所属：%s', ability_category_label(stype_id)),
+                        '说明：']
+              result.concat(description.split(/\r?\n/, -1)) unless description.empty?
+              result << format('状态：%s', learned ? '已学习' : '未学习')
+              result
+            else
+              ['请选择能力。']
+            end
+    @pages = build_pages(wrap_lines(lines))
+    @page = 0
+    refresh
+  end
+
+  # Rebuild the current page even when the selected ability did not change.
+  def refresh_ability(ability, stype_id)
+    @ability_key = nil
+    set_ability(ability, stype_id)
+  end
+
+  def scroll_page(delta)
+    return false if @pages.size <= 1
+
+    target = [[@page + delta.to_i, 0].max, @pages.size - 1].min
+    return false if target == @page
+
+    @page = target
+    refresh
+    true
+  end
+
+  def refresh
+    contents.clear
+    footer = format('页面 %d/%d　左右键翻页', @page + 1, @pages.size)
+    draw_text(0, 0, contents_width, line_height, footer, 2)
+    (@pages[@page] || []).each_with_index do |line, index|
+      draw_text(0, (index + 2) * line_height, contents_width, line_height,
+                line.to_s)
+    end
+  end
+
+  private
+
+  def ability_category_label(stype_id)
+    entry = ResearchMod.ability_type_entries.find do |item|
+      item[:stype_id].to_i == stype_id.to_i
+    end
+    entry ? format('%s（%s）', entry[:name], entry[:translated_name]) : '能力分类未知'
+  end
+
+  def wrap_lines(lines)
+    result = []
+    lines.each do |line|
+      current = ''
+      line.to_s.each_char do |character|
+        candidate = current + character
+        if !current.empty? && text_size(candidate).width > contents_width
+          result << current
+          current = character
+        else
+          current = candidate
+        end
+      end
+      result << current
+    end
+    result.empty? ? [''] : result
+  end
+
+  def build_pages(lines)
+    per_page = [contents_height / line_height - 2, 1].max
+    pages = lines.each_slice(per_page).to_a
+    pages.empty? ? [[]] : pages
+  end
+end
+
+class Window_ResearchModAbilityList < Window_Command
+  alias research_mod_ability_list_select select
+
+  def initialize(actor, help_window)
+    @actor = actor
+    @stype_id = nil
+    @entries = []
+    @help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    self.z = 430
+    hide
+    deactivate
+    unselect
+  end
+
+  def window_width
+    ResearchMod.class_learning_half_width
+  end
+
+  def window_height
+    Graphics.height
+  end
+
+  def setup(stype_id)
+    @stype_id = stype_id.to_i
+    @entries = ResearchMod.ability_entries(@stype_id)
+    refresh
+    select(0)
+    update_ability_help
+  end
+
+  def make_command_list
+    can_learn_all = @entries.any? do |ability|
+      !ResearchMod.ability_learning_status(@actor, ability) &&
+        (!@actor.respond_to?(:skill_learnable?) || @actor.skill_learnable?(ability))
+    end
+    can_forget_all = @entries.any? do |ability|
+      ResearchMod.ability_learning_status(@actor, ability)
+    end
+    add_command('全部学习', :learn_all, can_learn_all)
+    add_command('全部忘记', :forget_all, can_forget_all)
+    @entries.each do |ability|
+      learned = ResearchMod.ability_learning_status(@actor, ability)
+      suffix = learned ? '（已学习）' : ''
+      add_command(format('%4d  %s%s', ability.id, ability.name.to_s, suffix),
+                  :select, true, ability)
+    end
+    add_command('返回', :cancel)
+  end
+
+  def select(index)
+    research_mod_ability_list_select(index)
+    update_ability_help
+  end
+
+  def update_ability_help
+    return unless @help_window && !@help_window.disposed?
+
+    @help_window.actor = @actor
+    @help_window.set_ability(current_ext, @stype_id)
+  end
+
+  # Avoid Window_Selectable's default Window_Help callback.
+  def update_help
+    update_ability_help
+  end
+
+  def update
+    super
+    return unless active
+
+    if Input.trigger?(:RIGHT) || Input.trigger?(:R)
+      @help_window.scroll_page(1) if @help_window
+    elsif Input.trigger?(:LEFT) || Input.trigger?(:L)
+      @help_window.scroll_page(-1) if @help_window
+    end
+  end
+end
+
+class Window_ResearchModAbilityAction < Window_Command
+  def initialize(actor, ability, stype_id, help_window)
+    @actor = actor
+    @ability = ability
+    @stype_id = stype_id
+    @help_window = help_window
+    super(0, 0)
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - height) / 2
+    self.z = 500
+  end
+
+  def window_width
+    360
+  end
+
+  def visible_line_number
+    3
+  end
+
+  def make_command_list
+    learned = ResearchMod.ability_learning_status(@actor, @ability)
+    learnable = if @actor.respond_to?(:skill_learnable?)
+                  @actor.skill_learnable?(@ability)
+                else
+                  true
+                end
+    add_command('学习', :learn, !learned && learnable)
+    add_command('忘记', :forget, learned)
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    @help_window.set_ability(@ability, @stype_id) if @help_window
   end
 end
 
@@ -12851,7 +14637,7 @@ class Window_ResearchModAccumulatedDamageTarget < Window_Command
   end
 
   def visible_line_number
-    4
+    5
   end
 
   def make_command_list
@@ -13012,6 +14798,10 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:love, method(:select_love))
     @command_window.set_handler(:actor_params, method(:open_actor_param_editor))
     @command_window.set_handler(:learning, method(:select_learning_skill))
+    @command_window.set_handler(:all_skill_learning,
+                                method(:open_all_skill_learning))
+    @command_window.set_handler(:ability_learning,
+                                method(:open_ability_learning))
     @command_window.set_handler(:class, method(:select_class))
     @command_window.set_handler(:tribe, method(:select_tribe))
     @command_window.set_handler(:unlock_all, method(:unlock_all))
@@ -13048,6 +14838,8 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:love_dialogue, method(:toggle_love_dialogue_compatibility))
     @command_window.set_handler(:maoujou_gift_dialogue,
                                 method(:toggle_maoujou_gift_dialogue_compatibility))
+    @command_window.set_handler(:maoujou_pleading_dialogue,
+                                method(:toggle_maoujou_pleading_dialogue_compatibility))
     @command_window.set_handler(:maoujou_remove_candidate,
                                 method(:toggle_maoujou_remove_candidate_compatibility))
     @command_window.set_handler(:all_dialogue, method(:toggle_all_dialogue))
@@ -13070,6 +14862,7 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:battle_record, method(:toggle_battle_record))
     @command_window.set_handler(:manual_enemy_dialogue, method(:toggle_manual_enemy_dialogue))
     @command_window.set_handler(:battle_editor, method(:toggle_battle_editor))
+    @command_window.set_handler(:force_victory, method(:toggle_force_victory))
     @command_window.set_handler(:audio_overlay, method(:toggle_audio_overlay))
     @command_window.set_handler(:experimental, method(:open_experimental_menu))
     @command_window.set_handler(:stuck_help, method(:open_stuck_help))
@@ -13087,6 +14880,9 @@ class Scene_ResearchMod < Scene_MenuBase
     finish_actor_encyclopedia_candidate_dialogue if @actor_encyclopedia_candidate_dialogue_pending &&
                                                     $game_message &&
                                                     !$game_message.busy?
+    finish_custom_battle_candidate_dialogue if @custom_battle_candidate_dialogue_pending &&
+                                               $game_message &&
+                                               !$game_message.busy?
     update_actor_cutin_preview if @actor_cutin_preview
     update_actor_stand_picture_preview if @actor_stand_picture_preview
   end
@@ -13094,6 +14890,9 @@ class Scene_ResearchMod < Scene_MenuBase
   def terminate
     dispose_actor_cutin_preview
     dispose_actor_stand_picture_preview
+    defer_research_mod_window_dispose(@custom_battle_candidate_window)
+    @custom_battle_candidate_window = nil
+    @custom_battle_candidate_dialogue_pending = false
     dispose_research_mod_deferred_windows
     if @research_mod_message_window && !@research_mod_message_window.disposed?
       @research_mod_message_window.dispose
@@ -13293,6 +15092,285 @@ class Scene_ResearchMod < Scene_MenuBase
     defer_research_mod_window_dispose(@learning_window)
     @learning_window = nil
     @command_window.activate
+  end
+
+  def open_all_skill_learning
+    @all_skill_category_window = Window_ResearchModAllSkillCategory.new
+    @all_skill_type_window = Window_ResearchModAllSkillType.new
+    @all_skill_category_window.set_handler(:select,
+                                           method(:select_all_skill_category))
+    @all_skill_category_window.set_handler(:cancel,
+                                           method(:close_all_skill_learning))
+    @all_skill_type_window.set_handler(:select,
+                                      method(:select_all_skill_type))
+    @all_skill_type_window.set_handler(:cancel,
+                                      method(:close_all_skill_type))
+    @all_skill_category_window.show
+    @all_skill_category_window.activate
+    @command_help_window.hide
+    @command_window.deactivate
+  end
+
+  def select_all_skill_category
+    @selected_all_skill_category = @all_skill_category_window.current_ext
+    @all_skill_type_window.setup(@selected_all_skill_category)
+    @all_skill_category_window.hide
+    @all_skill_category_window.deactivate
+    @all_skill_type_window.show
+    @all_skill_type_window.activate
+  end
+
+  def select_all_skill_type
+    entry = @all_skill_type_window.current_ext
+    unless entry
+      @all_skill_type_window.activate
+      return
+    end
+
+    @selected_all_skill_type_id = entry[:type_id]
+    @all_skill_help_window = Window_ResearchModAllSkillHelp.new(
+      ResearchMod.class_learning_half_width, 0,
+      Graphics.width - ResearchMod.class_learning_half_width, Graphics.height
+    )
+    @all_skill_help_window.z = 440
+    @all_skill_list_window = Window_ResearchModAllSkillList.new(
+      @actor, @all_skill_help_window
+    )
+    @all_skill_list_window.set_handler(:select,
+                                       method(:select_all_skill))
+    @all_skill_list_window.set_handler(:learn_all,
+                                       method(:learn_all_skills_in_type))
+    @all_skill_list_window.set_handler(:forget_all,
+                                       method(:forget_all_skills_in_type))
+    @all_skill_list_window.set_handler(:cancel,
+                                       method(:close_all_skill_list))
+    @all_skill_list_window.setup(@selected_all_skill_type_id)
+    @all_skill_type_window.hide
+    @all_skill_type_window.deactivate
+    @all_skill_help_window.show
+    @all_skill_list_window.show
+    @all_skill_list_window.activate
+  end
+
+  def select_all_skill
+    skill = @all_skill_list_window.current_ext
+    unless skill
+      @all_skill_list_window.activate
+      return
+    end
+
+    @selected_all_skill_id = skill.id
+    @all_skill_action_window = Window_ResearchModAllSkillAction.new(
+      @actor, skill, @selected_all_skill_type_id, @all_skill_help_window
+    )
+    @all_skill_action_window.set_handler(:learn,
+                                         method(:learn_selected_all_skill))
+    @all_skill_action_window.set_handler(:forget,
+                                         method(:forget_selected_all_skill))
+    @all_skill_action_window.set_handler(:cancel,
+                                         method(:close_all_skill_action))
+    @all_skill_list_window.deactivate
+  end
+
+  def learn_selected_all_skill
+    ResearchMod.learn_all_skill(@actor, @selected_all_skill_id)
+    refresh_all_skill_windows
+  end
+
+  def learn_all_skills_in_type
+    ResearchMod.learn_all_skills_in_type(@actor, @selected_all_skill_type_id)
+    refresh_all_skill_windows
+  end
+
+  def forget_selected_all_skill
+    ResearchMod.forget_all_skill(@actor, @selected_all_skill_id)
+    refresh_all_skill_windows
+  end
+
+  def forget_all_skills_in_type
+    ResearchMod.forget_all_skills_in_type(@actor, @selected_all_skill_type_id)
+    refresh_all_skill_windows
+  end
+
+  def refresh_all_skill_windows
+    defer_research_mod_window_dispose(@all_skill_action_window)
+    @all_skill_action_window = nil
+    @all_skill_list_window.refresh if @all_skill_list_window
+    @all_skill_list_window.activate if @all_skill_list_window
+    @all_skill_list_window.update_all_skill_help if @all_skill_list_window
+  end
+
+  def close_all_skill_action
+    defer_research_mod_window_dispose(@all_skill_action_window)
+    @all_skill_action_window = nil
+    @all_skill_list_window.activate if @all_skill_list_window
+  end
+
+  def close_all_skill_list
+    defer_research_mod_window_dispose(@all_skill_list_window)
+    defer_research_mod_window_dispose(@all_skill_help_window)
+    @all_skill_list_window = nil
+    @all_skill_help_window = nil
+    @all_skill_type_window.show
+    @all_skill_type_window.activate
+  end
+
+  def close_all_skill_type
+    @all_skill_type_window.hide
+    @all_skill_type_window.deactivate
+    @all_skill_category_window.show
+    @all_skill_category_window.activate
+  end
+
+  def close_all_skill_learning
+    defer_research_mod_window_dispose(@all_skill_action_window)
+    defer_research_mod_window_dispose(@all_skill_list_window)
+    defer_research_mod_window_dispose(@all_skill_help_window)
+    defer_research_mod_window_dispose(@all_skill_type_window)
+    defer_research_mod_window_dispose(@all_skill_category_window)
+    @all_skill_action_window = nil
+    @all_skill_list_window = nil
+    @all_skill_help_window = nil
+    @all_skill_type_window = nil
+    @all_skill_category_window = nil
+    @command_help_window.show
+    @command_window.actor = @actor
+    @command_window.activate
+    @command_window.update_help
+  end
+
+  def open_ability_learning
+    @ability_category_window = Window_ResearchModAbilityCategory.new
+    @ability_category_window.set_handler(:select,
+                                         method(:select_ability_category))
+    @ability_category_window.set_handler(:cancel,
+                                         method(:close_ability_learning))
+    @ability_category_window.show
+    @ability_category_window.activate
+    @command_help_window.hide
+    @command_window.deactivate
+  end
+
+  def select_ability_category
+    entry = @ability_category_window.current_ext
+    unless entry
+      @ability_category_window.activate
+      return
+    end
+
+    @selected_ability_stype_id = entry[:stype_id]
+    @ability_help_window = Window_ResearchModAbilityHelp.new(
+      ResearchMod.class_learning_half_width, 0,
+      Graphics.width - ResearchMod.class_learning_half_width, Graphics.height
+    )
+    @ability_help_window.z = 440
+    @ability_list_window = Window_ResearchModAbilityList.new(
+      @actor, @ability_help_window
+    )
+    @ability_list_window.set_handler(:select,
+                                     method(:select_ability))
+    @ability_list_window.set_handler(:learn_all,
+                                     method(:learn_all_abilities_in_type))
+    @ability_list_window.set_handler(:forget_all,
+                                     method(:forget_all_abilities_in_type))
+    @ability_list_window.set_handler(:cancel,
+                                     method(:close_ability_list))
+    @ability_list_window.setup(@selected_ability_stype_id)
+    @ability_category_window.hide
+    @ability_category_window.deactivate
+    @ability_help_window.show
+    @ability_list_window.show
+    @ability_list_window.activate
+  end
+
+  def select_ability
+    ability = @ability_list_window.current_ext
+    unless ability
+      @ability_list_window.activate
+      return
+    end
+
+    @selected_ability_id = ability.id
+    @ability_action_window = Window_ResearchModAbilityAction.new(
+      @actor, ability, @selected_ability_stype_id, @ability_help_window
+    )
+    @ability_action_window.set_handler(:learn,
+                                       method(:learn_selected_ability))
+    @ability_action_window.set_handler(:forget,
+                                       method(:forget_selected_ability))
+    @ability_action_window.set_handler(:cancel,
+                                       method(:close_ability_action))
+    @ability_list_window.deactivate
+  end
+
+  def learn_selected_ability
+    ResearchMod.learn_ability(@actor, @selected_ability_id)
+    refresh_ability_windows
+  end
+
+  def forget_selected_ability
+    ResearchMod.forget_ability(@actor, @selected_ability_id)
+    refresh_ability_windows
+  end
+
+  def learn_all_abilities_in_type
+    ResearchMod.learn_all_abilities_in_type(@actor, @selected_ability_stype_id)
+    refresh_ability_windows
+  end
+
+  def forget_all_abilities_in_type
+    ResearchMod.forget_all_abilities_in_type(@actor, @selected_ability_stype_id)
+    refresh_ability_windows
+  end
+
+  def refresh_ability_windows
+    defer_research_mod_window_dispose(@ability_action_window)
+    @ability_action_window = nil
+    return unless @ability_list_window
+
+    selected_index = @ability_list_window.index
+    @ability_list_window.refresh
+    maximum_index = [@ability_list_window.item_max - 1, 0].max
+    @ability_list_window.select([[selected_index, 0].max, maximum_index].min)
+    @ability_list_window.activate
+    @ability_list_window.update_ability_help
+    if @ability_help_window && !@ability_help_window.disposed?
+      @ability_help_window.refresh_ability(
+        @ability_list_window.current_ext, @selected_ability_stype_id
+      )
+    end
+  end
+
+  def close_ability_action
+    defer_research_mod_window_dispose(@ability_action_window)
+    @ability_action_window = nil
+    @ability_list_window.activate if @ability_list_window
+  end
+
+  def close_ability_list
+    defer_research_mod_window_dispose(@ability_action_window)
+    defer_research_mod_window_dispose(@ability_list_window)
+    defer_research_mod_window_dispose(@ability_help_window)
+    @ability_action_window = nil
+    @ability_list_window = nil
+    @ability_help_window = nil
+    @ability_category_window.show
+    @ability_category_window.activate
+  end
+
+  def close_ability_learning
+    defer_research_mod_window_dispose(@ability_action_window)
+    defer_research_mod_window_dispose(@ability_list_window)
+    defer_research_mod_window_dispose(@ability_help_window)
+    defer_research_mod_window_dispose(@ability_category_window)
+    @ability_action_window = nil
+    @ability_list_window = nil
+    @ability_help_window = nil
+    @ability_category_window = nil
+    @command_help_window.show
+    @command_window.actor = @actor
+    @command_window.activate
+    @command_window.update_help
   end
 
   def select_class
@@ -13721,16 +15799,7 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def actor_encyclopedia_follower_word(actor, key)
-    settings = defined?(NWConst::Follower::SETTINGS) ? NWConst::Follower::SETTINGS : {}
-    setting = settings.values.find do |entry|
-      entry.is_a?(Hash) && entry[:actor_id].to_i == actor.id
-    end
-    value = setting && (setting[key] || setting[key.to_s])
-    return nil unless value.is_a?(Array) && !value.empty?
-
-    Word.new(value[0], value[1], value[2])
-  rescue
-    nil
+    ResearchMod.follower_dialogue_word(actor, key)
   end
 
   def manage_actor_encyclopedia_candidate
@@ -15526,7 +17595,7 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def open_custom_battle
-    @battle_help_window = Window_Help.new(9)
+    @battle_help_window = Window_Help.new(ResearchMod::CUSTOM_BATTLE_HELP_LINES)
     @battle_help_window.y = Graphics.height - @battle_help_window.height
     @battle_type_window = Window_ResearchModBattleType.new(@battle_help_window)
     @battle_type_window.set_handler(:select, method(:select_battle_database))
@@ -15537,6 +17606,9 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def close_custom_battle
+    defer_research_mod_window_dispose(@custom_battle_candidate_window)
+    @custom_battle_candidate_window = nil
+    @custom_battle_candidate_dialogue_pending = false
     defer_research_mod_window_dispose(@battle_type_window)
     defer_research_mod_window_dispose(@battle_help_window)
     @battle_type_window = nil
@@ -15648,10 +17720,91 @@ class Scene_ResearchMod < Scene_MenuBase
     @enemy_battle_mode_window.set_handler(:original, method(:select_original_enemy_troop))
     @enemy_battle_mode_window.set_handler(:temporary, method(:select_temporary_enemy))
     @enemy_battle_mode_window.set_handler(:enemy_items, method(:open_enemy_item_menu))
+    @enemy_battle_mode_window.set_handler(:candidate_manage,
+                                          method(:open_custom_battle_candidate_manage))
     @enemy_battle_mode_window.set_handler(:cancel, method(:close_enemy_battle_mode))
   end
 
+  def open_custom_battle_candidate_manage
+    actor = @enemy_battle_mode_window && @enemy_battle_mode_window.follower_actor
+    unless actor
+      @enemy_battle_mode_window.activate if @enemy_battle_mode_window
+      return
+    end
+
+    @enemy_battle_mode_window.deactivate
+    @custom_battle_candidate_window = Window_ResearchModActorCandidateManage.new(actor)
+    @custom_battle_candidate_window.set_handler(:add,
+                                                method(:add_custom_battle_candidate))
+    @custom_battle_candidate_window.set_handler(:remove,
+                                                method(:remove_custom_battle_candidate))
+    @custom_battle_candidate_window.set_handler(:cancel,
+                                                method(:close_custom_battle_candidate))
+  rescue
+    @enemy_battle_mode_window.activate if @enemy_battle_mode_window
+  end
+
+  def custom_battle_candidate_actor
+    @enemy_battle_mode_window && @enemy_battle_mode_window.follower_actor
+  end
+
+  def add_custom_battle_candidate
+    actor = custom_battle_candidate_actor
+    if actor && $game_party && $game_party.respond_to?(:follow?) &&
+       !$game_party.follow?(actor.id)
+      $game_party.add_stand_actor(actor.id)
+      word = actor_encyclopedia_follower_word(actor, :yes)
+      return play_custom_battle_candidate_word(word) if word
+    end
+    close_custom_battle_candidate
+  end
+
+  def remove_custom_battle_candidate
+    actor = custom_battle_candidate_actor
+    if actor && $game_party && $game_party.respond_to?(:stand_actors) &&
+       $game_party.stand_actors.include?(actor.id)
+      $game_party.remove_stand_actor(actor.id)
+      ResearchMod.mark_removed_candidate_actor(actor.id)
+      word = actor_encyclopedia_follower_word(actor, :no)
+      return play_custom_battle_candidate_word(word) if word
+    end
+    close_custom_battle_candidate
+  end
+
+  def play_custom_battle_candidate_word(word)
+    @custom_battle_candidate_dialogue_pending = true
+    if @custom_battle_candidate_window
+      @custom_battle_candidate_window.hide
+      @custom_battle_candidate_window.deactivate
+    end
+    @enemy_battle_mode_window.hide if @enemy_battle_mode_window
+    word.execute
+  rescue
+    @custom_battle_candidate_dialogue_pending = false
+    close_custom_battle_candidate
+  end
+
+  def finish_custom_battle_candidate_dialogue
+    @custom_battle_candidate_dialogue_pending = false
+    close_custom_battle_candidate
+  end
+
+  def close_custom_battle_candidate
+    @custom_battle_candidate_dialogue_pending = false
+    defer_research_mod_window_dispose(@custom_battle_candidate_window)
+    @custom_battle_candidate_window = nil
+    if @enemy_battle_mode_window
+      @enemy_battle_mode_window.refresh
+      @enemy_battle_mode_window.show
+      @enemy_battle_mode_window.activate
+      @enemy_battle_mode_window.update_help
+    end
+  end
+
   def close_enemy_battle_mode
+    defer_research_mod_window_dispose(@custom_battle_candidate_window)
+    @custom_battle_candidate_window = nil
+    @custom_battle_candidate_dialogue_pending = false
     defer_research_mod_window_dispose(@enemy_battle_mode_window)
     @enemy_battle_mode_window = nil
     @battle_enemy = nil
@@ -15844,6 +17997,8 @@ class Scene_ResearchMod < Scene_MenuBase
     @battle_confirm_source = nil
     @battle_request = nil
     @battle_enemy = nil
+    @custom_battle_candidate_window = nil
+    @custom_battle_candidate_dialogue_pending = false
   end
 
   def restore_custom_battle_after_battle
@@ -16097,6 +18252,13 @@ class Scene_ResearchMod < Scene_MenuBase
 
   def toggle_maoujou_gift_dialogue_compatibility
     ResearchMod.toggle_maoujou_gift_dialogue_compatibility
+    @command_window.refresh
+    @command_window.activate
+    @command_window.update_help
+  end
+
+  def toggle_maoujou_pleading_dialogue_compatibility
+    ResearchMod.toggle_maoujou_pleading_dialogue_compatibility
     @command_window.refresh
     @command_window.activate
     @command_window.update_help
@@ -16361,6 +18523,12 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.activate
   end
 
+  def toggle_force_victory
+    ResearchMod.toggle_force_victory
+    @command_window.refresh
+    @command_window.activate
+  end
+
   def toggle_manual_enemy_dialogue
     ResearchMod.toggle_manual_enemy_dialogue
     @command_window.refresh
@@ -16401,7 +18569,15 @@ class Scene_ResearchMod < Scene_MenuBase
 
   def open_class_list(kind)
     @selected_kind = kind
-    @list_window = Window_ResearchModClassList.new(kind)
+    @command_help_window.hide
+    @class_learning_help_window = Window_ResearchModClassLearningHelp.new(
+      ResearchMod.class_learning_half_width, 0,
+      Graphics.width - ResearchMod.class_learning_half_width, Graphics.height
+    )
+    @class_learning_help_window.z = 400
+    @list_window = Window_ResearchModClassList.new(
+      kind, @class_learning_help_window
+    )
     @list_window.set_handler(:select, method(:apply_selection))
     @list_window.set_handler(:cancel, method(:close_class_list))
     @command_window.deactivate
@@ -16415,17 +18591,15 @@ class Scene_ResearchMod < Scene_MenuBase
       @class_level_window.set_handler(:ok, method(:apply_class_level))
       @class_level_window.set_handler(:cancel, method(:close_class_level_input))
     end
-    unless @class_level_help_window
-      @class_level_help_window = Window_Help.new(3)
-      @class_level_help_window.z = 500
-    end
     @class_level_window.setup(@actor, @selected_target_id)
+    @class_level_help_window = @class_learning_help_window
     kind_name = @selected_kind == :class ? '职业' : '种族'
     @class_level_help_window.set_text(format(
       "目标%s：ID %d  %s\n请输入切换后的%s等级（1～%d）。\n降低等级不会忘记已经学会的技能。",
       kind_name, entry.id, entry.name, kind_name, @class_level_window.maximum
     ))
     @class_level_help_window.show
+    @class_learning_help_window.set_entry(entry, @selected_kind)
     @list_window.deactivate
   end
 
@@ -16439,14 +18613,19 @@ class Scene_ResearchMod < Scene_MenuBase
   def close_class_level_input
     @class_level_window.close
     @class_level_window.deactivate
-    @class_level_help_window.hide
+    @class_learning_help_window.show if @class_learning_help_window
     @list_window.activate
   end
 
   def close_class_list
     defer_research_mod_window_dispose(@list_window)
+    defer_research_mod_window_dispose(@class_learning_help_window)
     @list_window = nil
+    @class_learning_help_window = nil
+    @class_level_help_window = nil
+    @command_help_window.show
     @command_window.activate
+    @command_window.update_help
   end
 
   def backup_actor
@@ -16459,6 +18638,30 @@ class Scene_ResearchMod < Scene_MenuBase
     ResearchMod.restore(@actor)
     @command_window.actor = @actor
     @command_window.activate
+  end
+
+  # Keep the class level input focused while the learning details remain on
+  # the right side; the original bottom help window is intentionally unused.
+  def apply_selection
+    @selected_target_id = @list_window.current_ext
+    entry = $data_classes[@selected_target_id]
+    unless @class_level_window
+      @class_level_window = Window_ResearchModClassLevelInput.new
+      @class_level_window.set_handler(:ok, method(:apply_class_level))
+      @class_level_window.set_handler(:cancel, method(:close_class_level_input))
+    end
+    @class_level_window.setup(@actor, @selected_target_id)
+    @class_learning_help_window.set_entry(entry, @selected_kind) if
+      @class_learning_help_window
+    @class_learning_help_window.show if @class_learning_help_window
+    @list_window.deactivate
+  end
+
+  def close_class_level_input
+    @class_level_window.close
+    @class_level_window.deactivate
+    @class_learning_help_window.show if @class_learning_help_window
+    @list_window.activate
   end
 end
 
@@ -16640,7 +18843,8 @@ class Sprite_Character < Sprite_Base
     create_research_mod_chest_hint unless sprite
     sprite = @research_mod_chest_hint_sprite
     icon_id = ResearchMod.chest_hint_icon_id(type)
-    valid_icon = refresh_research_mod_chest_hint_icon(icon_id)
+    completed = ResearchMod.chest_hint_completed?(@character)
+    valid_icon = refresh_research_mod_chest_hint_icon(icon_id, completed)
     sprite.visible = visible && valid_icon
     return unless sprite.visible
 
@@ -16650,24 +18854,37 @@ class Sprite_Character < Sprite_Base
     sprite.opacity = opacity
   end
 
-  def refresh_research_mod_chest_hint_icon(icon_id)
+  def refresh_research_mod_chest_hint_icon(icon_id, completed = false)
     return false if icon_id.nil? || icon_id.to_i < 0
 
     icon_id = icon_id.to_i
+    signature = [icon_id, completed == true]
     iconset = Cache.system('Iconset')
     columns = iconset.width / 24
     rows = iconset.height / 24
     return false if columns <= 0 || rows <= 0 || icon_id >= columns * rows
-    return true if @research_mod_chest_hint_icon_id == icon_id
+    return true if @research_mod_chest_hint_icon_id == signature
 
     bitmap = @research_mod_chest_hint_sprite.bitmap
     bitmap.clear
     source = Rect.new(icon_id % columns * 24, icon_id / columns * 24, 24, 24)
     bitmap.blt(0, 0, iconset, source)
-    @research_mod_chest_hint_icon_id = icon_id
+    draw_research_mod_chest_hint_completion(bitmap) if completed
+    @research_mod_chest_hint_icon_id = signature
     true
   rescue
     false
+  end
+
+  def draw_research_mod_chest_hint_completion(bitmap)
+    border = Color.new(0, 0, 0, 230)
+    green = Color.new(64, 192, 80, 255)
+    white = Color.new(255, 255, 255, 255)
+    bitmap.fill_rect(14, 14, 10, 10, border)
+    bitmap.fill_rect(15, 15, 8, 8, green)
+    bitmap.fill_rect(16, 18, 2, 2, white)
+    bitmap.fill_rect(18, 20, 2, 2, white)
+    bitmap.fill_rect(20, 16, 2, 5, white)
   end
 
   def dispose_research_mod_chest_hint
@@ -16683,6 +18900,18 @@ end
 
 class Window_ChoiceList
   alias research_mod_update_placement_for_custom_talk update_placement
+  alias research_mod_update_help_for_pleading update_help
+  alias research_mod_choice_list_dispose dispose
+  alias research_mod_choice_list_select select
+  alias research_mod_choice_list_close close
+
+  def select(index)
+    research_mod_choice_list_select(index)
+    # Window_ChoiceList selects an item during initialization, before the
+    # custom pleading help state is active.  Avoid invoking the custom help
+    # updater for ordinary message choices at that point.
+    update_help if research_mod_pleading_choice_help_active?
+  end
 
   def update_placement
     research_mod_update_placement_for_custom_talk
@@ -16692,6 +18921,76 @@ class Window_ChoiceList
     self.x = Graphics.width - width
     bottom_y = $game_message.instance_variable_get(:@research_mod_choice_bottom_y)
     self.y = [bottom_y.to_i - height, 0].max if bottom_y
+  end
+
+  def update_help
+    # The inherited Window_Selectable#update_help assumes @help_window is
+    # present.  Choice lists normally have no help window, so only run the
+    # custom updater while the pleading help mode is active.
+    unless research_mod_pleading_choice_help_active?
+      research_mod_hide_pleading_choice_help
+      return
+    end
+    window = research_mod_pleading_choice_help
+    choice = $game_message.choices[index]
+    return unless choice
+
+    if choice.to_s == 'やめる'
+      text = '返回上一级菜单。'
+    elsif choice.to_s == '拒绝'
+      text = '播放原版好感度不足对话；实际不要求好感度。'
+    else
+      text = '播放对应原版场景；实际不要求好感度。'
+    end
+    window.set_text(text)
+  end
+
+  def research_mod_pleading_choice_help_active?
+    return false unless $game_message
+
+    $game_message.instance_variable_get(
+      :@research_mod_pleading_choice_help_active
+    ) == true
+  end
+
+  def research_mod_pleading_choice_help
+    window = @research_mod_pleading_choice_help_window
+    if window.nil? || window.disposed?
+      window = Window_Help.new(2)
+      window.width = Graphics.width
+      window.height = window.fitting_height(2)
+      window.x = 0
+      # Keep the supplemental explanation at the top so it does not overlap
+      # the original pleading prompt/help window at the bottom.
+      window.y = 0
+      window.z = self.z + 10
+      window.show
+      window.open
+      @research_mod_pleading_choice_help_window = window
+    end
+    window
+  end
+
+  def research_mod_hide_pleading_choice_help
+    window = @research_mod_pleading_choice_help_window
+    return unless window
+
+    window.hide
+    window.close
+  end
+
+  def close
+    research_mod_hide_pleading_choice_help
+    research_mod_choice_list_close
+  end
+
+  def dispose
+    window = @research_mod_pleading_choice_help_window
+    if window && !window.disposed?
+      window.dispose
+    end
+    @research_mod_pleading_choice_help_window = nil
+    research_mod_choice_list_dispose
   end
 end
 
