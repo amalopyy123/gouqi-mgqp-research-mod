@@ -107,6 +107,8 @@ module ResearchMod
   CHEST_ITEM_ICON_VARIABLE_ID = 8000
   CHEST_MONSTER_ICON_DEFAULT = 1
   CHEST_ITEM_ICON_DEFAULT = 191
+  GRAPHICS_OVERRIDE_DIRECTORY = 'GouqiGraphicsOverride'
+  GRAPHICS_OVERRIDE_ENABLED_KEY = :@research_mod_graphics_override_enabled
   POT_CHARACTER_INDEX = 6
   CONTAINER_PENDING_OPEN_KEY = :@research_mod_container_pending_open
   REMOVED_CANDIDATE_ACTOR_IDS_KEY = :@research_mod_removed_candidate_actor_ids
@@ -234,7 +236,7 @@ module ResearchMod
   PERSONA_DIALOGUE_MENU_TEXT = '形態変化させる'
   RESEARCH_PERSONA_DIALOGUE_MENU_TEXT = '魔王城对话形态变化（无视事件）'
   RESEARCH_LOVE_DIALOGUE_MENU_TEXT = '魔王城好感度修改'
-  RESEARCH_MAOUJOU_GIFT_DIALOGUE_MENU_TEXT = '赠送礼物改'
+  RESEARCH_MAOUJOU_GIFT_DIALOGUE_MENU_TEXT = '魔王城赠送礼物改'
   RESEARCH_MAOUJOU_PLEADING_DIALOGUE_MENU_TEXT = '魔王城撒娇改'
   RESEARCH_MAOUJOU_REMOVE_CANDIDATE_MENU_TEXT = '魔王城移除候补'
   CANDIDATE_DIALOGUE_MENU_TEXT = "魔王城全对话"
@@ -495,6 +497,139 @@ module ResearchMod
 
   def self.class_learning_half_width
     [Graphics.width / 2, 1].max
+  end
+
+  # Return valid synthesis recipes grouped by output kind and ID.
+  def self.research_mod_synthesis_products(kind = nil)
+    return [] unless defined?(NWConst::Synthesize::Recipes)
+
+    grouped = {}
+    NWConst::Synthesize::Recipes.each do |recipe_id, recipe|
+      next unless recipe.is_a?(Hash)
+
+      output = recipe[:after] || recipe['after']
+      next unless output.is_a?(Hash)
+
+      output_kind = (output[:kind] || output['kind']).to_sym
+      output_id = (output[:id] || output['id']).to_i
+      next unless [:I, :W, :A].include?(output_kind)
+      next if kind && output_kind != kind.to_sym
+
+      item = case output_kind
+             when :I then $data_items[output_id]
+             when :W then $data_weapons[output_id]
+             when :A then $data_armors[output_id]
+             end
+      next unless item && !item.name.to_s.empty?
+
+      key = [output_kind, output_id]
+      grouped[key] ||= { :kind => output_kind, :item => item, :recipes => [] }
+      grouped[key][:recipes] << { :id => recipe_id.to_i, :data => recipe }
+    end
+    grouped.values.sort_by { |entry| [entry[:kind].to_s, entry[:item].id.to_i, entry[:item].name.to_s] }
+  rescue
+    []
+  end
+
+  def self.research_mod_synthesis_page(kind, start_id)
+    products = research_mod_synthesis_products(kind)
+    normalized = [start_id.to_i, 1].max
+    available = products.select { |entry| entry[:item].id.to_i >= normalized }
+    previous = products.select { |entry| entry[:item].id.to_i < normalized }
+    page_entries = available.first(DATABASE_PAGE_SIZE)
+    previous_entries = previous.last(DATABASE_PAGE_SIZE)
+    {
+      :start_id => normalized,
+      :entries => page_entries,
+      :previous_start_id => previous_entries.empty? ? nil : previous_entries.first[:item].id,
+      :next_start_id => available[DATABASE_PAGE_SIZE] && available[DATABASE_PAGE_SIZE][:item].id,
+      :maximum_id => products.empty? ? 1 : products.last[:item].id.to_i
+    }
+  rescue
+    { :start_id => 1, :entries => [], :previous_start_id => nil,
+      :next_start_id => nil, :maximum_id => 1 }
+  end
+
+  def self.research_mod_synthesis_kind_name(kind)
+    { :I => '物品', :W => '武器', :A => '防具' }[kind.to_sym] || '未知'
+  end
+
+  def self.research_mod_synthesis_object(kind, id)
+    case kind.to_sym
+    when :I then $data_items[id.to_i]
+    when :W then $data_weapons[id.to_i]
+    when :A then $data_armors[id.to_i]
+    end
+  rescue
+    nil
+  end
+
+  def self.research_mod_synthesis_material_lines(recipe)
+    befores = recipe[:befores] || recipe['befores'] || []
+    lines = []
+    befores.each do |material|
+      next unless material.is_a?(Hash)
+
+      kind = (material[:kind] || material['kind']).to_sym
+      id = (material[:id] || material['id']).to_i
+      number = (material[:num] || material['num']).to_i
+      item = research_mod_synthesis_object(kind, id)
+      name = item ? item.name.to_s : '未定义'
+      owned = item && $game_party ? $game_party.item_number(item) : 0
+      lines << format('%s ID %d「%s」：%d（持有%d）',
+                      research_mod_synthesis_kind_name(kind), id, name,
+                      number, owned)
+    end
+    lines
+  rescue
+    []
+  end
+
+  def self.research_mod_synthesis_recipe_available?(recipe)
+    return false unless recipe.is_a?(Hash)
+    price = (recipe[:price] || recipe['price']).to_i
+    return false if $game_party.nil? || $game_party.gold < price
+
+    befores = recipe[:befores] || recipe['befores'] || []
+    befores.all? do |material|
+      kind = (material[:kind] || material['kind']).to_sym
+      item = research_mod_synthesis_object(kind, material[:id] || material['id'])
+      item && $game_party.item_number(item) >= (material[:num] || material['num']).to_i
+    end
+  rescue
+    false
+  end
+
+  def self.research_mod_execute_synthesis(recipe, free_materials = false)
+    return false unless recipe.is_a?(Hash) && $game_party
+
+    output = recipe[:after] || recipe['after']
+    return false unless output.is_a?(Hash)
+
+    output_kind = (output[:kind] || output['kind']).to_sym
+    output_item = research_mod_synthesis_object(output_kind, output[:id] || output['id'])
+    return false unless output_item
+
+    price = (recipe[:price] || recipe['price']).to_i
+    befores = recipe[:befores] || recipe['befores'] || []
+    unless free_materials
+      return false unless research_mod_synthesis_recipe_available?(recipe)
+
+      $game_party.gain_gold(-price)
+      befores.each do |material|
+        kind = (material[:kind] || material['kind']).to_sym
+        item = research_mod_synthesis_object(kind, material[:id] || material['id'])
+        $game_party.gain_item(item, -(material[:num] || material['num']).to_i) if item
+      end
+    end
+    $game_party.gain_item(output_item, 1)
+    if defined?($game_library) && $game_library &&
+       $game_library.respond_to?(:count_up_party_synthesize)
+      $game_library.count_up_party_synthesize
+    end
+    true
+  rescue
+    false
   end
 
   # Return the same five skill groups used by the battle dialogue browser.
@@ -3017,6 +3152,59 @@ end
     enabled
   end
 
+  def self.graphics_override_enabled?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(GRAPHICS_OVERRIDE_ENABLED_KEY) == true
+  end
+
+  def self.graphics_override_path(path)
+    return nil unless graphics_override_enabled?
+
+    value = path.to_s.tr('\\', '/')
+    @graphics_override_path_cache ||= {}
+    return @graphics_override_path_cache[value] if
+      @graphics_override_path_cache.key?(value)
+
+    match = value.match(/\AGraphics\/?(.+)\z/i)
+    unless match
+      @graphics_override_path_cache[value] = nil
+      return nil
+    end
+
+    relative = match[1]
+    base = File.join(GRAPHICS_OVERRIDE_DIRECTORY, relative)
+    if File.file?(base)
+      @graphics_override_path_cache[value] = base
+      return base
+    end
+
+    ['.png', '.jpg', '.jpeg'].each do |extension|
+      candidate = base + extension
+      next unless File.file?(candidate)
+
+      @graphics_override_path_cache[value] = candidate
+      return candidate
+    end
+    @graphics_override_path_cache[value] = nil
+    nil
+  rescue
+    nil
+  end
+
+  def self.clear_graphics_cache
+    Cache.clear if defined?(Cache) && Cache.respond_to?(:clear)
+  rescue
+  end
+
+  def self.toggle_graphics_override
+    enabled = !graphics_override_enabled?
+    $game_system.instance_variable_set(GRAPHICS_OVERRIDE_ENABLED_KEY, enabled)
+    @graphics_override_path_cache = {}
+    clear_graphics_cache
+    enabled
+  end
+
   def self.force_victory_enabled?
     return false unless $game_system
 
@@ -5255,6 +5443,23 @@ end
 
     index = members.index(actor) || -1
     members[(index + 1) % members.size]
+  end
+end
+
+module Cache
+  class << self
+    alias research_mod_graphics_override_normal_bitmap normal_bitmap
+    alias research_mod_graphics_override_hue_changed_bitmap hue_changed_bitmap
+
+    def normal_bitmap(path)
+      override = ResearchMod.graphics_override_path(path)
+      research_mod_graphics_override_normal_bitmap(override || path)
+    end
+
+    def hue_changed_bitmap(path, hue)
+      override = ResearchMod.graphics_override_path(path)
+      research_mod_graphics_override_hue_changed_bitmap(override || path, hue)
+    end
   end
 end
 
@@ -10336,7 +10541,14 @@ class Scene_Battle < Scene_Base
                @research_mod_battle_edit_talk_actor_window,
                @research_mod_battle_edit_talk_enemy_window,
                @research_mod_battle_edit_talk_list_window,
-               @research_mod_battle_edit_talk_choice_window]
+               @research_mod_battle_edit_talk_choice_window,
+               @synthesis_category_window,
+               @synthesis_help_window,
+               @synthesis_list_window,
+               @synthesis_recipe_window,
+               @synthesis_action_window,
+               @synthesis_id_window,
+               @synthesis_id_help_window]
     windows.each do |window|
       window.dispose if window && !window.disposed?
     end
@@ -10378,6 +10590,13 @@ class Scene_Battle < Scene_Base
     @research_mod_battle_edit_talk_enemy_window = nil
     @research_mod_battle_edit_talk_list_window = nil
     @research_mod_battle_edit_talk_choice_window = nil
+    @synthesis_category_window = nil
+    @synthesis_help_window = nil
+    @synthesis_list_window = nil
+    @synthesis_recipe_window = nil
+    @synthesis_action_window = nil
+    @synthesis_id_window = nil
+    @synthesis_id_help_window = nil
     @research_mod_force_victory_pending = false
     research_mod_enemy_status_terminate
   end
@@ -10556,7 +10775,7 @@ class Window_ResearchModCommand < Window_Command
     add_command('魔王城赠送礼物改：' + (ResearchMod.maoujou_gift_dialogue_compatibility? ? '已开启' : '已关闭'), :maoujou_gift_dialogue)
     add_command('魔王城撒娇改：' + (ResearchMod.maoujou_pleading_dialogue_compatibility? ? '已开启' : '已关闭'), :maoujou_pleading_dialogue)
     add_command('魔王城移除候补：' + (ResearchMod.maoujou_remove_candidate_compatibility? ? '已开启' : '已关闭'), :maoujou_remove_candidate)
-    add_command('---------- 查看与资源（修改） ----------', :separator, false)
+    add_command('---------- 查看与修改资源 ----------', :separator, false)
     add_command('角色图鉴', :actor_encyclopedia)
     add_command('开关与变量修改', :debug_database)
     add_command('数值与货币修改', :value_editor)
@@ -10565,8 +10784,10 @@ class Window_ResearchModCommand < Window_Command
     add_command(format('获得全部牛奶（%d/%d）', ResearchMod.owned_milk_count, ResearchMod.milk_items.size), :gain_all_milk)
     add_command(format('获得全部结婚物品（%d/%d）', ResearchMod.owned_marriage_armor_count, ResearchMod.marriage_armors.size), :gain_all_marriage_armors)
     add_command(format('获得全部CD（%d/%d）', ResearchMod.owned_cd_count, ResearchMod.cd_items.size), :gain_all_cds)
+    add_command('合成改', :synthesize)
     add_command('当前音乐信息', :audio_info)
     add_command('当前音乐悬浮窗：' + (ResearchMod.audio_overlay_enabled? ? '已开启' : '已关闭'), :audio_overlay)
+    add_command('图片资源覆盖：' + (ResearchMod.graphics_override_enabled? ? '已开启' : '已关闭'), :graphics_override)
     add_command('---------- 战斗 ----------', :separator, false)
     add_command('自定义战斗', :custom_battle)
     add_command('战败事件查看', :lose_event)
@@ -10634,6 +10855,10 @@ class Window_ResearchModCommand < Window_Command
                       ResearchMod::CHEST_ITEM_ICON_DEFAULT) + 10.chr +
                '已处理的容器保留原图标，并在右下角叠加绿色勾；' + 10.chr +
                '可在“开关与变量修改”中改图标ID；动态容器不显示。'
+           when :graphics_override
+             '开启后优先读取 GouqiGraphicsOverride 中与 Graphics 相同路径的图片。' + 10.chr +
+               '覆盖图片不存在时自动读取原版 Graphics 图片。' + 10.chr +
+               '切换后会清理图片缓存，后续读取立即生效。'
            when :party_edit_actor_id
              ResearchMod::PARTY_EDIT_ACTOR_ID_HELP_TEXT
            when :actor_encyclopedia
@@ -10697,6 +10922,10 @@ class Window_ResearchModCommand < Window_Command
            when :force_victory
              '开启后，战斗队伍指令增加“强制胜利”。' + 10.chr +
                '选择后直接执行原版胜利结算，包含战斗结束事件、经验、金钱、掉落和入队处理。'
+           when :synthesize
+             '按物品、武器、防具分类浏览全部合成产物。' + 10.chr +
+               '每批最多显示200个，可重新输入起始ID并加载上一批或下一批。' + 10.chr +
+               '选择产物后可选择具体配方，再执行合成或无需材料合成。'
            when :audio_overlay
              '开启后，地图和战斗右上角持续显示当前BGM与BGS文件名；' + 10.chr + '音乐变化时自动刷新。'
            when :value_editor
@@ -10720,7 +10949,7 @@ class Window_ResearchModCommand < Window_Command
                '选择角色后输入0～9999999，直接设置该角色好感度。' + 10.chr +
                '只修改数值，不会自动推进或跳过原对话。'
            when :maoujou_gift_dialogue
-             '开启后，在魔王城人物对话菜单中加入赠送礼物改。' + 10.chr +
+             '开启后，在魔王城人物对话菜单中加入魔王城赠送礼物改。' + 10.chr +
                '礼物窗口显示物品ID和好感度变化。' + 10.chr +
                '赠送无视持有状态，不扣物品；查看只播放对应对白。'
            when :maoujou_pleading_dialogue
@@ -14779,6 +15008,347 @@ class Window_ResearchModAccumulatedDamageInput < Window_NumberInputBase
   end
 end
 
+class Window_ResearchModSynthesisCategory < Window_Command
+  def initialize
+    super(0, 0)
+    self.z = 420
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def visible_line_number
+    4
+  end
+
+  def make_command_list
+    add_command('物品', :select, true, :I)
+    add_command('武器', :select, true, :W)
+    add_command('防具', :select, true, :A)
+    add_command('返回', :cancel)
+  end
+end
+
+class Window_ResearchModSynthesisHelp < Window_Selectable
+  def initialize(x, y, width, height)
+    @lines = ['请选择合成产物。']
+    @page = 0
+    @pages = [[]]
+    @page_key = nil
+    super(x, y, width, height)
+    self.active = false
+    rebuild_pages
+    refresh
+  end
+
+  def item_max
+    0
+  end
+
+  def update_cursor
+    cursor_rect.empty
+  end
+
+  def update_help
+  end
+
+  def set_lines(lines)
+    lines = Array(lines).map(&:to_s)
+    lines = [''] if lines.empty?
+    key = [lines, contents_width, contents_height]
+    return if key == @page_key
+
+    @page_key = key
+    @lines = lines
+    @page = 0
+    rebuild_pages
+    refresh
+  end
+
+  def scroll_page(delta)
+    return false if @pages.size <= 1
+
+    target = [[@page + delta.to_i, 0].max, @pages.size - 1].min
+    return false if target == @page
+
+    @page = target
+    refresh
+    true
+  end
+
+  def update
+    super
+    if Input.trigger?(:RIGHT) || Input.trigger?(:R)
+      scroll_page(1)
+    elsif Input.trigger?(:LEFT) || Input.trigger?(:L)
+      scroll_page(-1)
+    end
+  end
+
+  def refresh
+    contents.clear
+    footer = format('页面 %d/%d　左右键翻页', @page + 1, @pages.size)
+    draw_text(0, 0, contents_width, line_height, footer, 2)
+    (@pages[@page] || []).each_with_index do |line, index|
+      draw_text(0, (index + 2) * line_height, contents_width, line_height, line)
+    end
+  end
+
+  private
+
+  def rebuild_pages
+    wrapped = []
+    @lines.each do |line|
+      current = ''
+      line.to_s.each_char do |character|
+        candidate = current + character
+        if !current.empty? && text_size(candidate).width > contents_width
+          wrapped << current
+          current = character
+        else
+          current = candidate
+        end
+      end
+      wrapped << current
+    end
+    per_page = [contents_height / line_height - 2, 1].max
+    @pages = wrapped.each_slice(per_page).to_a
+    @pages = [[]] if @pages.empty?
+  end
+end
+
+class Window_ResearchModSynthesisIdInput < Window_NumberInputBase
+  attr_reader :maximum
+
+  def setup(kind, initial_id)
+    products = ResearchMod.research_mod_synthesis_products(kind)
+    @maximum = [products.empty? ? 1 : products.last[:item].id.to_i, 1].max
+    start(@maximum.to_s.size, [[initial_id.to_i, @maximum].min, 1].max)
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - height) / 2
+    self.z = 500
+  end
+
+  def number
+    [[@number.to_i, @maximum].min, 1].max
+  end
+
+  def process_digit_change
+    super
+    return unless @number < 1
+
+    @number = 1
+    refresh
+  end
+end
+
+class Window_ResearchModSynthesisList < Window_Command
+  attr_reader :page
+
+  def initialize(kind, start_id, history, help_window)
+    @kind = kind
+    @history = history
+    @help_window = help_window
+    @page = ResearchMod.research_mod_synthesis_page(kind, start_id)
+    @entries = @page[:entries]
+    super(0, 0)
+    self.help_window = help_window
+    self.z = 430
+    hide
+    deactivate
+    unselect
+  end
+
+  def window_width
+    ResearchMod.class_learning_half_width
+  end
+
+  def window_height
+    Graphics.height
+  end
+
+  def setup(start_id = @page[:start_id])
+    @page = ResearchMod.research_mod_synthesis_page(@kind, start_id)
+    @entries = @page[:entries]
+    refresh
+    select(0)
+    update_synthesis_help
+  end
+
+  def make_command_list
+    add_command('重新输入起始ID', :reinput)
+    add_command(format('加载上一批%d个', ResearchMod::DATABASE_PAGE_SIZE),
+                :previous, !@history.empty? || !@page[:previous_start_id].nil?)
+    @entries.each do |entry|
+      item = entry[:item]
+      suffix = entry[:recipes].size > 1 ? format('（%d种配方）', entry[:recipes].size) : ''
+      add_command(format('%4d  %s%s', item.id, item.name.to_s, suffix),
+                  :select, true, entry)
+    end
+    add_command(format('加载下一批%d个', ResearchMod::DATABASE_PAGE_SIZE),
+                :next, !@page[:next_start_id].nil?)
+    add_command('返回', :cancel)
+  end
+
+  def select(index)
+    super
+    update_synthesis_help
+  end
+
+  def update_synthesis_help
+    return unless @help_window && !@help_window.disposed?
+
+    entry = current_ext
+    if entry && current_symbol == :select
+      item = entry[:item]
+      recipe = entry[:recipes].first[:data]
+      lines = [format('ID：%d', item.id),
+               format('名称：%s', item.name.to_s),
+               format('类型：%s', ResearchMod.research_mod_synthesis_kind_name(entry[:kind])),
+               '说明：']
+      description = item.respond_to?(:description) ? item.description.to_s.gsub(92.chr + 'n', 10.chr) : ''
+      lines.concat(description.split(/\r?\n/, -1)) unless description.empty?
+      lines << format('配方：%d种', entry[:recipes].size)
+      lines << format('金币：%d', (recipe[:price] || recipe['price']).to_i)
+      lines << '材料：'
+      lines.concat(ResearchMod.research_mod_synthesis_material_lines(recipe))
+      lines << '确认后选择具体配方或合成操作。'
+      @help_window.set_lines(lines)
+    else
+      text = case current_symbol
+             when :reinput then '重新输入当前合成分类的起始ID。'
+             when :previous then format('返回上一批最多%d个合成产物。', ResearchMod::DATABASE_PAGE_SIZE)
+             when :next then format('从本批末尾继续加载最多%d个合成产物。', ResearchMod::DATABASE_PAGE_SIZE)
+             when :cancel then '返回合成类型选择。'
+             else '当前分类没有可用的合成产物。'
+             end
+      @help_window.set_lines([text])
+    end
+  end
+
+  def update_help
+    update_synthesis_help
+  end
+end
+
+class Window_ResearchModSynthesisRecipe < Window_Command
+  def initialize(entry, help_window)
+    @entry = entry
+    @help_window = help_window
+    super(0, 0)
+    self.x = 0
+    self.y = 0
+    self.z = 450
+    make_recipe_commands
+  end
+
+  def window_width
+    ResearchMod.class_learning_half_width
+  end
+
+  def visible_line_number
+    10
+  end
+
+  def make_recipe_commands
+    refresh
+    select(0)
+  end
+
+  def make_command_list
+    @entry[:recipes].each_with_index do |recipe_entry, index|
+      recipe = recipe_entry[:data]
+      price = (recipe[:price] || recipe['price']).to_i
+      enabled = ResearchMod.research_mod_synthesis_recipe_available?(recipe)
+      add_command(format('配方 %d　金币%d%s', recipe_entry[:id], price,
+                         enabled ? '' : '（材料不足）'),
+                  :select, true, recipe_entry)
+    end
+    add_command('返回', :cancel)
+  end
+
+  def select(index)
+    super
+    update_synthesis_help
+  end
+
+  def update_synthesis_help
+    return unless @help_window && !@help_window.disposed?
+
+    recipe_entry = current_ext
+    return @help_window.set_lines(['请选择配方。']) unless recipe_entry
+
+    item = @entry[:item]
+    recipe = recipe_entry[:data]
+    lines = [format('ID：%d', item.id), format('名称：%s', item.name.to_s),
+             format('类型：%s', ResearchMod.research_mod_synthesis_kind_name(@entry[:kind])),
+             format('配方 ID：%d', recipe_entry[:id]),
+             format('金币：%d', (recipe[:price] || recipe['price']).to_i), '材料：']
+    lines.concat(ResearchMod.research_mod_synthesis_material_lines(recipe))
+    lines << format('状态：%s', ResearchMod.research_mod_synthesis_recipe_available?(recipe) ? '可以合成' : '材料或金币不足')
+    @help_window.set_lines(lines)
+  end
+
+  def update_help
+    update_synthesis_help
+  end
+end
+
+class Window_ResearchModSynthesisAction < Window_Command
+  def initialize(entry, recipe_entry, help_window)
+    @entry = entry
+    @recipe_entry = recipe_entry
+    @help_window = help_window
+    super(0, 0)
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - height) / 2
+    self.z = 500
+  end
+
+  def window_width
+    360
+  end
+
+  def visible_line_number
+    3
+  end
+
+  def make_command_list
+    recipe = @recipe_entry[:data]
+    add_command('合成', :synthesize,
+                ResearchMod.research_mod_synthesis_recipe_available?(recipe))
+    add_command('合成（无需材料）', :synthesize_free, true)
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless @help_window
+
+    case current_symbol
+    when :synthesize
+      item = @entry[:item]
+      recipe = @recipe_entry[:data]
+      lines = [format('ID：%d', item.id),
+               format('名称：%s', item.name.to_s),
+               format('类型：%s', ResearchMod.research_mod_synthesis_kind_name(@entry[:kind])),
+               '说明：']
+      description = item.respond_to?(:description) ? item.description.to_s.gsub(92.chr + 'n', 10.chr) : ''
+      lines.concat(description.split(/\r?\n/, -1)) unless description.empty?
+      lines << format('配方 ID：%d', @recipe_entry[:id])
+      lines << format('金币：%d', (recipe[:price] || recipe['price']).to_i)
+      lines << '材料：'
+      lines.concat(ResearchMod.research_mod_synthesis_material_lines(recipe))
+      lines << format('状态：%s', ResearchMod.research_mod_synthesis_recipe_available?(recipe) ? '可以合成' : '材料或金币不足')
+      @help_window.set_lines(lines)
+    when :synthesize_free
+      @help_window.set_lines(['跳过金币和材料检查，直接获得一件合成产物。'])
+    else
+      @help_window.set_lines(['返回上一层。'])
+    end
+  end
+end
+
 class Scene_ResearchMod < Scene_MenuBase
   def start
     super
@@ -14816,6 +15386,7 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:consumption, method(:open_consumption_menu))
     @command_window.set_handler(:free_cooking, method(:open_free_cooking))
     @command_window.set_handler(:audio_info, method(:open_audio_info))
+    @command_window.set_handler(:synthesize, method(:open_synthesize))
     @command_window.set_handler(:author_info, method(:open_author_info))
     @command_window.set_handler(:custom_battle, method(:open_custom_battle))
     @command_window.set_handler(:guiding_thread, method(:use_guiding_thread_without_cost))
@@ -14828,6 +15399,7 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:map_inspector, method(:open_map_inspector))
     @command_window.set_handler(:current_map_containers, method(:open_current_map_containers))
     @command_window.set_handler(:chest_hint, method(:toggle_chest_hint))
+    @command_window.set_handler(:graphics_override, method(:toggle_graphics_override))
     @command_window.set_handler(:debug_database, method(:open_debug_database_editor))
     @command_window.set_handler(:database_item, method(:open_database_item_menu))
     @command_window.set_handler(:gain_all_panties, method(:gain_all_panties))
@@ -14891,6 +15463,13 @@ class Scene_ResearchMod < Scene_MenuBase
     dispose_actor_cutin_preview
     dispose_actor_stand_picture_preview
     defer_research_mod_window_dispose(@custom_battle_candidate_window)
+    defer_research_mod_window_dispose(@synthesis_action_window)
+    defer_research_mod_window_dispose(@synthesis_recipe_window)
+    defer_research_mod_window_dispose(@synthesis_list_window)
+    defer_research_mod_window_dispose(@synthesis_help_window)
+    defer_research_mod_window_dispose(@synthesis_category_window)
+    defer_research_mod_window_dispose(@synthesis_id_window)
+    defer_research_mod_window_dispose(@synthesis_id_help_window)
     @custom_battle_candidate_window = nil
     @custom_battle_candidate_dialogue_pending = false
     dispose_research_mod_deferred_windows
@@ -15796,6 +16375,264 @@ class Scene_ResearchMod < Scene_MenuBase
     @value_menu_window.set_handler(:gain_lewd_soul, method(:gain_lewd_soul))
     @value_menu_window.set_handler(:cancel, method(:close_value_editor))
     @command_window.deactivate
+  end
+
+  def open_synthesize
+    @synthesis_start_ids = { :I => 1, :W => 1, :A => 1 }
+    @synthesis_history = []
+    @synthesis_id_window = nil
+    @synthesis_id_help_window = nil
+    @synthesis_category_window = Window_ResearchModSynthesisCategory.new
+    @synthesis_help_window = Window_ResearchModSynthesisHelp.new(
+      ResearchMod.class_learning_half_width, 0,
+      Graphics.width - ResearchMod.class_learning_half_width, Graphics.height
+    )
+    @synthesis_help_window.hide
+    @synthesis_list_window = nil
+    @synthesis_recipe_window = nil
+    @synthesis_action_window = nil
+    @synthesis_category_window.set_handler(:select, method(:select_synthesis_category))
+    @synthesis_category_window.set_handler(:cancel, method(:close_synthesize))
+    @synthesis_category_window.activate
+    @command_help_window.hide
+    @command_window.deactivate
+  end
+
+  def select_synthesis_category
+    @synthesis_kind = @synthesis_category_window.current_ext.to_sym
+    @synthesis_start_ids ||= { :I => 1, :W => 1, :A => 1 }
+    @synthesis_start_ids[@synthesis_kind] ||= 1
+    @synthesis_history = []
+    unless @synthesis_help_window && !@synthesis_help_window.disposed?
+      @synthesis_help_window = Window_ResearchModSynthesisHelp.new(
+        ResearchMod.class_learning_half_width, 0,
+        Graphics.width - ResearchMod.class_learning_half_width, Graphics.height
+      )
+    end
+    @synthesis_list_window = Window_ResearchModSynthesisList.new(
+      @synthesis_kind, @synthesis_start_ids[@synthesis_kind],
+      @synthesis_history, @synthesis_help_window
+    )
+    @synthesis_list_window.set_handler(:select, method(:select_synthesis_product))
+    @synthesis_list_window.set_handler(:reinput, method(:reinput_synthesis_start_id))
+    @synthesis_list_window.set_handler(:previous, method(:load_previous_synthesis_page))
+    @synthesis_list_window.set_handler(:next, method(:load_next_synthesis_page))
+    @synthesis_list_window.set_handler(:cancel, method(:close_synthesis_list))
+    @synthesis_list_window.setup
+    @synthesis_category_window.hide
+    @synthesis_category_window.deactivate
+    @synthesis_list_window.show
+    @synthesis_list_window.activate
+    @synthesis_help_window.show
+  end
+
+  def reload_synthesis_list(start_id)
+    defer_research_mod_window_dispose(@synthesis_list_window)
+    @synthesis_start_ids ||= { :I => 1, :W => 1, :A => 1 }
+    @synthesis_start_ids[@synthesis_kind] = start_id.to_i
+    @synthesis_list_window = Window_ResearchModSynthesisList.new(
+      @synthesis_kind, @synthesis_start_ids[@synthesis_kind],
+      @synthesis_history, @synthesis_help_window
+    )
+    @synthesis_list_window.set_handler(:select, method(:select_synthesis_product))
+    @synthesis_list_window.set_handler(:reinput, method(:reinput_synthesis_start_id))
+    @synthesis_list_window.set_handler(:previous, method(:load_previous_synthesis_page))
+    @synthesis_list_window.set_handler(:next, method(:load_next_synthesis_page))
+    @synthesis_list_window.set_handler(:cancel, method(:close_synthesis_list))
+    @synthesis_list_window.show
+    @synthesis_list_window.activate
+  end
+
+  def reinput_synthesis_start_id
+    @synthesis_list_window.deactivate
+    @synthesis_list_window.hide
+    @synthesis_help_window.hide if @synthesis_help_window
+    @synthesis_id_help_window = Window_Help.new(3)
+    @synthesis_id_help_window.y = Graphics.height - @synthesis_id_help_window.height
+    products = ResearchMod.research_mod_synthesis_products(@synthesis_kind)
+    maximum = products.empty? ? 1 : products.last[:item].id
+    @synthesis_id_help_window.set_text(
+      format('请输入%s合成产物起始ID（1～%d）。确认：加载本批项目；取消：返回合成列表。',
+             ResearchMod.research_mod_synthesis_kind_name(@synthesis_kind), maximum)
+    )
+    @synthesis_id_window = Window_ResearchModSynthesisIdInput.new
+    @synthesis_id_window.setup(@synthesis_kind, @synthesis_start_ids[@synthesis_kind])
+    @synthesis_id_window.set_handler(:ok, method(:apply_synthesis_start_id))
+    @synthesis_id_window.set_handler(:cancel, method(:close_synthesis_id_input))
+    @synthesis_id_window.activate
+  end
+
+  def apply_synthesis_start_id
+    start_id = @synthesis_id_window.number
+    @synthesis_start_ids[@synthesis_kind] = start_id
+    @synthesis_history.clear
+    defer_research_mod_window_dispose(@synthesis_id_window)
+    defer_research_mod_window_dispose(@synthesis_id_help_window)
+    @synthesis_id_window = nil
+    @synthesis_id_help_window = nil
+    reload_synthesis_list(start_id)
+    @synthesis_help_window.show if @synthesis_help_window
+  end
+
+  def close_synthesis_id_input
+    defer_research_mod_window_dispose(@synthesis_id_window)
+    defer_research_mod_window_dispose(@synthesis_id_help_window)
+    @synthesis_id_window = nil
+    @synthesis_id_help_window = nil
+    @synthesis_help_window.show if @synthesis_help_window
+    @synthesis_list_window.show if @synthesis_list_window
+    @synthesis_list_window.activate if @synthesis_list_window
+  end
+
+  def load_next_synthesis_page
+    next_start = @synthesis_list_window.page[:next_start_id]
+    return @synthesis_list_window.activate unless next_start
+
+    @synthesis_history << @synthesis_list_window.page[:start_id]
+    reload_synthesis_list(next_start)
+  end
+
+  def load_previous_synthesis_page
+    previous_start = @synthesis_history.pop
+    previous_start ||= @synthesis_list_window.page[:previous_start_id]
+    return @synthesis_list_window.activate unless previous_start
+
+    reload_synthesis_list(previous_start)
+  end
+
+  def select_synthesis_product
+    entry = @synthesis_list_window.current_ext
+    unless entry
+      @synthesis_list_window.activate
+      return
+    end
+
+    if entry[:recipes].length > 1
+      @synthesis_recipe_window = Window_ResearchModSynthesisRecipe.new(
+        entry, @synthesis_help_window
+      )
+      @synthesis_recipe_window.set_handler(:select, method(:select_synthesis_recipe))
+      @synthesis_recipe_window.set_handler(:cancel, method(:close_synthesis_recipe))
+      @synthesis_list_window.deactivate
+      @synthesis_list_window.hide
+    else
+      open_synthesis_action(entry, entry[:recipes].first)
+    end
+  end
+
+  def select_synthesis_recipe
+    entry = @synthesis_list_window.current_ext
+    recipe_entry = @synthesis_recipe_window.current_ext
+    return @synthesis_recipe_window.activate unless entry && recipe_entry
+
+    open_synthesis_action(entry, recipe_entry)
+  end
+
+  def open_synthesis_action(entry, recipe_entry)
+    @synthesis_action_window = Window_ResearchModSynthesisAction.new(
+      entry, recipe_entry, @synthesis_help_window
+    )
+    @synthesis_action_window.set_handler(:synthesize, method(:execute_synthesis))
+    @synthesis_action_window.set_handler(:synthesize_free,
+                                         method(:execute_synthesis_free))
+    @synthesis_action_window.set_handler(:cancel, method(:close_synthesis_action))
+    if @synthesis_list_window
+      @synthesis_list_window.deactivate
+      @synthesis_list_window.hide
+    end
+    if @synthesis_recipe_window
+      @synthesis_recipe_window.deactivate
+      @synthesis_recipe_window.hide
+    end
+  end
+
+  def execute_synthesis
+    recipe_entry = @synthesis_action_window.instance_variable_get(:@recipe_entry)
+    if ResearchMod.research_mod_execute_synthesis(recipe_entry[:data], false)
+      Sound.play_ok
+      refresh_synthesis_after_execute
+    else
+      Sound.play_buzzer
+      @synthesis_action_window.activate
+    end
+  end
+
+  def execute_synthesis_free
+    recipe_entry = @synthesis_action_window.instance_variable_get(:@recipe_entry)
+    if ResearchMod.research_mod_execute_synthesis(recipe_entry[:data], true)
+      Sound.play_ok
+      refresh_synthesis_after_execute
+    else
+      Sound.play_buzzer
+      @synthesis_action_window.activate
+    end
+  end
+
+  def refresh_synthesis_after_execute
+    entry = @synthesis_list_window.current_ext
+    defer_research_mod_window_dispose(@synthesis_action_window)
+    @synthesis_action_window = nil
+    @synthesis_list_window.refresh if @synthesis_list_window
+    if @synthesis_recipe_window
+      @synthesis_recipe_window.refresh
+      @synthesis_recipe_window.show
+      @synthesis_recipe_window.activate
+      @synthesis_recipe_window.update_synthesis_help
+    else
+      @synthesis_list_window.show if @synthesis_list_window
+      @synthesis_list_window.activate if @synthesis_list_window
+      @synthesis_list_window.update_synthesis_help if @synthesis_list_window
+    end
+    @synthesis_help_window.set_lines(['合成完成，已获得一件产物。',
+                                      format('ID：%d', entry[:item].id),
+                                      format('名称：%s', entry[:item].name.to_s)]) if entry
+  end
+
+  def close_synthesis_action
+    defer_research_mod_window_dispose(@synthesis_action_window)
+    @synthesis_action_window = nil
+    if @synthesis_recipe_window
+      @synthesis_recipe_window.show
+      @synthesis_recipe_window.activate
+    else
+      @synthesis_list_window.show if @synthesis_list_window
+      @synthesis_list_window.activate if @synthesis_list_window
+    end
+  end
+
+  def close_synthesis_recipe
+    defer_research_mod_window_dispose(@synthesis_recipe_window)
+    @synthesis_recipe_window = nil
+    @synthesis_list_window.show if @synthesis_list_window
+    @synthesis_list_window.activate if @synthesis_list_window
+  end
+
+  def close_synthesis_list
+    defer_research_mod_window_dispose(@synthesis_list_window)
+    @synthesis_list_window = nil
+    @synthesis_help_window.hide if @synthesis_help_window && !@synthesis_help_window.disposed?
+    @synthesis_category_window.show
+    @synthesis_category_window.activate
+  end
+
+  def close_synthesize
+    defer_research_mod_window_dispose(@synthesis_id_window)
+    defer_research_mod_window_dispose(@synthesis_id_help_window)
+    defer_research_mod_window_dispose(@synthesis_action_window)
+    defer_research_mod_window_dispose(@synthesis_recipe_window)
+    defer_research_mod_window_dispose(@synthesis_list_window)
+    defer_research_mod_window_dispose(@synthesis_help_window)
+    defer_research_mod_window_dispose(@synthesis_category_window)
+    @synthesis_action_window = nil
+    @synthesis_recipe_window = nil
+    @synthesis_list_window = nil
+    @synthesis_help_window = nil
+    @synthesis_category_window = nil
+    @synthesis_id_window = nil
+    @synthesis_id_help_window = nil
+    @command_help_window.show
+    @command_window.activate
+    @command_window.update_help
   end
 
   def actor_encyclopedia_follower_word(actor, key)
@@ -18529,6 +19366,12 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.activate
   end
 
+  def toggle_graphics_override
+    ResearchMod.toggle_graphics_override
+    @command_window.refresh
+    @command_window.activate
+  end
+
   def toggle_manual_enemy_dialogue
     ResearchMod.toggle_manual_enemy_dialogue
     @command_window.refresh
@@ -18940,7 +19783,8 @@ class Window_ChoiceList
     elsif choice.to_s == '拒绝'
       text = '播放原版好感度不足对话；实际不要求好感度。'
     else
-      text = '播放对应原版场景；实际不要求好感度。'
+      text = '播放对应原版场景；实际不要求好感度。' + 10.chr +
+             '不会转移到冥府。'
     end
     window.set_text(text)
   end
@@ -18967,6 +19811,12 @@ class Window_ChoiceList
       window.show
       window.open
       @research_mod_pleading_choice_help_window = window
+    else
+      # The choice list can be reused after returning to the dialogue menu.
+      # Show the existing window again when the custom pleading help mode is
+      # activated for a subsequent request.
+      window.show
+      window.open unless window.openness == 255
     end
     window
   end
