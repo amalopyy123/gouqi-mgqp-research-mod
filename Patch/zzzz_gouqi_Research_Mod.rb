@@ -100,6 +100,8 @@ module ResearchMod
   HARPY_FEATHER_PLACEHOLDER_NAME = '欠番'
   HARPY_FEATHER_ALL_PLACES_KEY = :@research_mod_harpy_feather_all_places
   GUIDING_THREAD_COMMON_EVENT_ID = 31
+  # Original maid dialogue common event.
+  MAID_DIALOGUE_COMMON_EVENT_ID = 111
   CHEST_HINT_ENABLED_KEY = :@research_mod_chest_hint_enabled
   CHEST_HINT_VARIABLES_INITIALIZED_KEY =
     :@research_mod_chest_hint_variables_initialized
@@ -177,6 +179,7 @@ module ResearchMod
   TEMPTATION_DISABLED_KEY = :@research_mod_temptation_disabled
   LOSE_EVENT_SKIP_KEY = :@research_mod_lose_event_skip
   SURE_HIT_KILL_KEY = :@research_mod_sure_hit_kill
+  REMOVE_DAMAGE_VARIANCE_KEY = :@research_mod_remove_damage_variance
   THROUGH_MODE_KEY = :@research_mod_through_mode
   NO_RANDOM_ENCOUNTER_KEY = :@research_mod_no_random_encounter
   ENEMY_STAT_MULTIPLIER_KEY = :@research_mod_enemy_stat_multiplier
@@ -2929,6 +2932,18 @@ end
     enabled
   end
 
+  def self.remove_damage_variance?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(REMOVE_DAMAGE_VARIANCE_KEY) == true
+  end
+
+  def self.toggle_remove_damage_variance
+    enabled = !remove_damage_variance?
+    $game_system.instance_variable_set(REMOVE_DAMAGE_VARIANCE_KEY, enabled)
+    enabled
+  end
+
   def self.through_mode?
     return false unless $game_system
 
@@ -5537,6 +5552,29 @@ class Game_Battler
   alias research_mod_item_block_rate item_block_rate
   alias research_mod_sure_hit_item_apply_hit item_apply_hit
   alias research_mod_sure_kill_execute_damage execute_damage
+  alias research_mod_remove_damage_variance_apply_variance apply_variance
+  alias research_mod_remove_damage_variance_make_damage_value make_damage_value
+
+  def apply_variance(damage, variance)
+    return damage if instance_variable_get(:@research_mod_skip_damage_variance)
+
+    research_mod_remove_damage_variance_apply_variance(damage, variance)
+  end
+
+  def make_damage_value(user, item, *args)
+    skip_variance = ResearchMod.remove_damage_variance? && $game_party &&
+                    $game_party.in_battle && item && item.damage &&
+                    item.damage.to_hp? && !item.damage.recover?
+    unless skip_variance
+      return research_mod_remove_damage_variance_make_damage_value(user, item, *args)
+    end
+
+    previous = instance_variable_get(:@research_mod_skip_damage_variance)
+    instance_variable_set(:@research_mod_skip_damage_variance, true)
+    research_mod_remove_damage_variance_make_damage_value(user, item, *args)
+  ensure
+    instance_variable_set(:@research_mod_skip_damage_variance, previous) if skip_variance
+  end
 
   def item_effect_steal(user, item, effect)
     unless user.actor? && ResearchMod.steal_always_success?
@@ -6895,6 +6933,7 @@ class Game_Party
     result
   end
 end
+
 
 class Game_Battler < Game_BattlerBase
   alias research_mod_temptation_immunity_add_state add_state
@@ -10804,6 +10843,7 @@ class Window_ResearchModCommand < Window_Command
     add_command('无消耗料理', :free_cooking)
     add_command('---------- 功能开关（修改） ----------', :separator, false)
     add_command('我方攻击必中必杀：' + (ResearchMod.sure_hit_kill? ? '已开启' : '已关闭'), :sure_hit_kill)
+    add_command('移除伤害浮动：' + (ResearchMod.remove_damage_variance? ? '已开启' : '已关闭'), :remove_damage_variance)
     add_command('偷盗必定成功：' + (ResearchMod.steal_always_success? ? '已开启' : '已关闭'), :steal_success)
     add_command('牛奶获取必定成功：' + (ResearchMod.milk_always_success? ? '已开启' : '已关闭'), :milk_success)
     add_command('物品必定掉落：' + (ResearchMod.drop_always_success? ? '已开启' : '已关闭'), :drop_success)
@@ -10898,6 +10938,10 @@ class Window_ResearchModCommand < Window_Command
              '开启后，战败时直接跳过败北事件并进入原版战败后处理。\n作者标记为不可跳过的特殊败北事件仍按原版执行。'
            when :sure_hit_kill
              '开启后，我方攻击必中，并尽量将命中目标直接判定为必杀效果。'
+           when :remove_damage_variance
+             '开启后，战斗中的 HP 伤害不再应用技能或物品的随机伤害浮动。' + 10.chr +
+               '不影响命中、闪避、暴击、防御、属性倍率及其它增伤减伤计算。' + 10.chr +
+               'HP 恢复、MP/TP/金币等数值不受影响。'
            when :through_mode
              '开启后，玩家可以穿过地图上的普通阻挡。' + 10.chr + '部分特殊事件或区域仍可能限制移动。'
            when :no_random_encounter
@@ -15423,6 +15467,8 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:temptation_immunity, method(:toggle_temptation_immunity))
     @command_window.set_handler(:lose_event_skip, method(:toggle_lose_event_skip))
     @command_window.set_handler(:sure_hit_kill, method(:toggle_sure_hit_kill))
+    @command_window.set_handler(:remove_damage_variance,
+                                method(:toggle_remove_damage_variance))
     @command_window.set_handler(:through_mode, method(:toggle_through_mode))
     @command_window.set_handler(:no_random_encounter, method(:toggle_no_random_encounter))
     @command_window.set_handler(:original_encounter_disabled, method(:toggle_original_encounter_disabled))
@@ -19173,6 +19219,13 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.activate
   end
 
+  def toggle_remove_damage_variance
+    ResearchMod.toggle_remove_damage_variance
+    @command_window.refresh
+    @command_window.activate
+    @command_window.update_help
+  end
+
   def toggle_through_mode
     ResearchMod.toggle_through_mode
     @command_window.refresh
@@ -19915,5 +19968,49 @@ class Game_Party
   def add_item_data(item, number)
     return if item.nil?
     research_mod_add_item_data_without_nil(item, number)
+  end
+end
+
+# Add a direct entry point to the original maid common event.
+class Window_ResearchModCommand
+  alias research_mod_maid_make_command_list make_command_list
+  def make_command_list
+    research_mod_maid_make_command_list
+    add_command('女仆对话', :maid_dialogue)
+    maid_command = @list.pop
+    map_index = @list.index { |entry| entry[:symbol] == :map_follower_count }
+    insert_index = map_index ? map_index + 1 : @list.length
+    @list.insert(insert_index, maid_command)
+  end
+
+  alias research_mod_maid_update_help update_help
+  def update_help
+    research_mod_maid_update_help
+    return unless help_window && current_symbol == :maid_dialogue
+
+    help_window.set_text(
+      '播放原版女仆对话，并显示队伍编辑、队伍登记/呼出、物品仓库和移动等选项。'
+    )
+  end
+end
+
+class Scene_ResearchMod
+  alias research_mod_maid_start start
+  def start
+    research_mod_maid_start
+    @command_window.set_handler(:maid_dialogue, method(:open_maid_dialogue))
+  end
+
+  def open_maid_dialogue
+    common_event = $data_common_events[ResearchMod::MAID_DIALOGUE_COMMON_EVENT_ID]
+    unless common_event
+      Sound.play_buzzer
+      @command_window.activate
+      @command_help_window.set_text('无法读取原版女仆对话事件。')
+      return
+    end
+
+    $game_temp.reserve_common_event(ResearchMod::MAID_DIALOGUE_COMMON_EVENT_ID)
+    SceneManager.goto(Scene_Map)
   end
 end
