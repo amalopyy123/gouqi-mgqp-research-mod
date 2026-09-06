@@ -1,0 +1,301 @@
+脚本ID,脚本名,解压后字节数,命中关键词,候选文件
+0,"",26,"",""
+1,"",0,"",""
+2,▼ モジュール,0,"",""
+3,Vocab,5871,"",""
+4,Sound,2353,"",""
+5,Cache,6140,"",""
+6,DataManager,12122,race,0006_DataManager.rb
+7,SceneManager,4123,クラス,0007_SceneManager.rb
+8,BattleManager,15647,"",""
+9,"",0,"",""
+10,▼ ゲームオブジェクト,0,"",""
+11,Game_Temp,2194,クラス,0011_Game_Temp.rb
+12,Game_System,5192,クラス,0012_Game_System.rb
+13,Game_Timer,2083,クラス,0013_Game_Timer.rb
+14,Game_Message,4498,クラス,0014_Game_Message.rb
+15,Game_Switches,1493,クラス,0015_Game_Switches.rb
+16,Game_Variables,1436,クラス,0016_Game_Variables.rb
+17,Game_SelfSwitches,1516,クラス,0017_Game_SelfSwitches.rb
+18,Game_Screen,9307,クラス,0018_Game_Screen.rb
+19,Game_Picture,6268,クラス,0019_Game_Picture.rb
+20,Game_Pictures,1254,クラス,0020_Game_Pictures.rb
+21,Game_BaseItem,2291,クラス,0021_Game_BaseItem.rb
+22,Game_Action,9632,クラス,0022_Game_Action.rb
+23,Game_ActionResult,7047,クラス,0023_Game_ActionResult.rb
+24,Game_BattlerBase,33309,クラス,0024_Game_BattlerBase.rb
+25,Game_Battler,35789,クラス,0025_Game_Battler.rb
+26,Game_Actor,29342,class_id; 職業; クラス,0026_Game_Actor.rb
+27,Game_Enemy,10734,クラス,0027_Game_Enemy.rb
+28,Game_Actors,947,クラス,0028_Game_Actors.rb
+29,Game_Unit,5827,クラス,0029_Game_Unit.rb
+30,Game_Party,18770,クラス,0030_Game_Party.rb
+31,Game_Troop,8588,クラス,0031_Game_Troop.rb
+32,Game_Map,29356,クラス,0032_Game_Map.rb
+33,Game_CommonEvent,1683,クラス,0033_Game_CommonEvent.rb
+34,Game_CharacterBase,18861,クラス,0034_Game_CharacterBase.rb
+35,Game_Character,17292,クラス,0035_Game_Character.rb
+36,Game_Player,19773,クラス,0036_Game_Player.rb
+37,Game_Follower,3181,クラス,0037_Game_Follower.rb
+38,Game_Followers,4655,クラス,0038_Game_Followers.rb
+39,Game_Vehicle,7493,クラス,0039_Game_Vehicle.rb
+40,Game_Event,12272,クラス,0040_Game_Event.rb
+41,Game_Interpreter,55090,class_id; 職業; クラス,0041_Game_Interpreter.rb
+42,"",0,"",""
+43,▼ スプライト,0,"",""
+44,Sprite_Base,8653,クラス,0044_Sprite_Base.rb
+45,Sprite_Character,8251,クラス,0045_Sprite_Character.rb
+46,Sprite_Battler,8499,クラス,0046_Sprite_Battler.rb
+47,Sprite_Picture,2876,クラス,0047_Sprite_Picture.rb
+48,Sprite_Timer,2954,"",""
+49,Spriteset_Weather,7416,クラス,0049_Spriteset_Weather.rb
+50,Spriteset_Map,10910,クラス,0050_Spriteset_Map.rb
+51,Spriteset_Battle,15892,クラス,0051_Spriteset_Battle.rb
+52,"",0,"",""
+53,▼ ウィンドウ,0,"",""
+54,Window_Base,25231,職業; クラス,0054_Window_Base.rb
+55,Window_Selectable,18135,クラス,0055_Window_Selectable.rb
+56,Window_Command,6352,"",""
+57,Window_HorzCommand,4458,"",""
+58,Window_Help,1734,"",""
+59,Window_Gold,1838,"",""
+60,Window_MenuCommand,4707,クラス,0060_Window_MenuCommand.rb
+61,Window_MenuStatus,3732,"",""
+62,Window_MenuActor,1716,"",""
+63,Window_ItemCategory,2304,"",""
+64,Window_ItemList,4548,"",""
+65,Window_SkillCommand,2944,"",""
+66,Window_SkillStatus,1553,"",""
+67,Window_SkillList,4832,"",""
+68,Window_EquipStatus,4148,"",""
+69,Window_EquipCommand,1504,"",""
+70,Window_EquipSlot,5036,"",""
+71,Window_EquipItem,3232,"",""
+72,Window_Status,5220,"",""
+73,Window_SaveFile,2948,"",""
+74,Window_ShopCommand,1547,"",""
+75,Window_ShopBuy,4567,"",""
+76,Window_ShopSell,1221,"",""
+77,Window_ShopNumber,5513,"",""
+78,Window_ShopStatus,5399,"",""
+79,Window_NameEdit,5048,"",""
+80,Window_NameInput,10886,"",""
+81,Window_ChoiceList,3630,"",""
+82,Window_NumberInput,5989,"",""
+83,Window_KeyItem,2096,"",""
+84,Window_Message,15253,"",""
+85,Window_ScrollText,3590,"",""
+86,Window_MapName,3579,"",""
+87,Window_BattleLog,16816,"",""
+88,Window_PartyCommand,1757,"",""
+89,Window_ActorCommand,3070,"",""
+90,Window_BattleStatus,4703,"",""
+91,Window_BattleActor,1493,"",""
+92,Window_BattleEnemy,2788,"",""
+93,Window_BattleSkill,1373,"",""
+94,Window_BattleItem,1643,"",""
+95,Window_TitleCommand,1953,"",""
+96,Window_GameEnd,1595,"",""
+97,Window_DebugLeft,4326,クラス,0097_Window_DebugLeft.rb
+98,Window_DebugRight,4495,"",""
+99,"",0,"",""
+100,▼ シーン,0,"",""
+101,Scene_Base,5133,クラス,0101_Scene_Base.rb
+102,Scene_Title,5493,クラス,0102_Scene_Title.rb
+103,Scene_Map,11092,クラス,0103_Scene_Map.rb
+104,Scene_MenuBase,2551,クラス,0104_Scene_MenuBase.rb
+105,Scene_Menu,5458,クラス,0105_Scene_Menu.rb
+106,Scene_ItemBase,5953,クラス,0106_Scene_ItemBase.rb
+107,Scene_Item,3149,クラス,0107_Scene_Item.rb
+108,Scene_Skill,4462,クラス,0108_Scene_Skill.rb
+109,Scene_Equip,5918,クラス,0109_Scene_Equip.rb
+110,Scene_Status,1088,クラス,0110_Scene_Status.rb
+111,Scene_File,8704,クラス,0111_Scene_File.rb
+112,Scene_Save,1506,クラス,0112_Scene_Save.rb
+113,Scene_Load,1571,クラス,0113_Scene_Load.rb
+114,Scene_End,2479,クラス,0114_Scene_End.rb
+115,Scene_Shop,11912,クラス,0115_Scene_Shop.rb
+116,Scene_Name,1289,クラス,0116_Scene_Name.rb
+117,Scene_Debug,3414,クラス,0117_Scene_Debug.rb
+118,Scene_Battle,28613,クラス,0118_Scene_Battle.rb
+119,Scene_Gameover,3297,クラス,0119_Scene_Gameover.rb
+120,"",0,"",""
+121,▼ 素材,0,"",""
+122,VXAce_SP1,6954,"",""
+123,( ここに追加 ),1072,"",""
+124,【WF-RGSS】共通rev29,43161,race; subclass; クラス,0124__WF-RGSS_rev29.rb
+125,【塵風】XP画面サイズ,14831,職業; クラス,0125__XP_.rb
+126,【CACAO】ベンチマーク,5392,"",""
+127,【CACAO】ポーカー,55220,"",""
+128,もんむす総合ベーススクリプト,27271,"",""
+129,基盤システム/メモ欄読み込み,10342,"",""
+130,基盤システム/特殊レベル制,14841,tribe; job; class_id; 種族; 職業,0130__.rb
+131,基盤システム/セリフ管理,10555,"",""
+132,基盤システム/ゲームマスター,7360,tribe; 種族; 職業,0132__.rb
+133,基盤システム/システムスイッチ,2652,"",""
+134,基盤システム/エンチャント名,41215,職業,0134__.rb
+135,基盤システム/ノベルパート,32794,"",""
+136,基盤システム/画像ビューア,8062,"",""
+137,基盤システム/画面演出,8699,"",""
+138,窓/最終確認,3590,"",""
+139,窓/簡易ステータス,1487,"",""
+140,窓/スキルネーム,1565,"",""
+141,窓/控えメンバーステータス,2515,"",""
+142,窓/獲得メダル,3043,"",""
+143,ft,2324,"",""
+144,r,24977,tribe; job; 種族; 職業; クラス; 転職,0144_r.rb
+145,ベース/Module,101813,race; tribe; job; 種族; 職業; 転職; patch,0145__Module.rb
+146,ベース/DataObject,50364,tribe; job; class_id; 種族; 職業; クラス; 転職,0146__DataObject.rb
+147,ベース/GameObject,268828,race; tribe; job; class_id; 種族; 職業; クラス,0147__GameObject.rb
+148,ベース/Sprite,11960,patch,0148__Sprite.rb
+149,ベース/Window,137627,race; tribe; class_id; 職業; クラス,0149__Window.rb
+150,ベース/Scene,89953,job; patch,0150__Scene.rb
+151,画面/アビリティ編集,29593,tribe,0151__.rb
+152,画面/パーティ編成,44536,tribe,0152__.rb
+153,画面/転職編集,62466,tribe; job; class_id; 種族; 職業; クラス; 転職; ジョブ,0153__.rb
+154,改造/セーブ,7826,"",""
+155,改造/ステータス画面,19904,tribe; job; 種族; 職業; クラス,0155__.rb
+156,改造/汎用店,9280,"",""
+157,画面/合成屋,24743,"",""
+158,図鑑/ベース,84191,tribe; job; 種族; 職業; クラス; 転職,0158__.rb
+159,図鑑/本体,105038,tribe; job; 種族; 職業; 転職,0159__.rb
+160,図鑑/カウント,12771,tribe; job; class_id; クラス,0160__.rb
+161,図鑑/実績取得,94,"",""
+162,仲間化システム,31926,"",""
+163,贈呈/好感度管理,11549,クラス,0163__.rb
+164,画面/ワープ選択,17384,"",""
+165,改造/フィールド特殊化,10540,"",""
+166,公開コマンド,25034,tribe; job; class_id; 種族; 職業,0166__.rb
+167,コンフィグ＋,40485,"",""
+168,付随/多重人格,2427,クラス,0168__.rb
+169,付随/時間停止,13215,"",""
+170,娯楽/基本,18549,"",""
+171,娯楽/景品交換,19175,"",""
+172,娯楽/トランプ,2656,"",""
+173,娯楽/スロット,45989,"",""
+174,娯楽/ポーカー改造,35505,"",""
+175,変数拡張,6135,"",""
+176,改造/アイテムお気に入り,1150,"",""
+177,改造/エラー処理,3462,race; patch,0177__.rb
+178,Item_List,1674,クラス,0178_Item_List.rb
+179,エンチャント/n,13837,クラス,0179__n.rb
+180,エンチャント/note,66555,tribe; job; 種族; 職業; クラス,0180__note.rb
+181,"",0,"",""
+182,"",0,"",""
+183,■データ設定,855,"",""
+184,【仮】データ変換スクリプト,7207,"",""
+185,【仮】テストスクリプト,4407,"",""
+186,【仮】宝箱変換スクリプト,3393,"",""
+187,データベースコンバータ,9861,class_id,0187__.rb
+188,■SETTING DATA,326,"",""
+189,Audio,0,"",""
+190,DamageCalculation,0,"",""
+191,DownWords(Actor),419756,"",""
+192,DownWords(Enemy),534804,種族,0192_DownWords_Enemy_.rb
+193,Enchantment,366793,職業,0193_Enchantment.rb
+194,Field,0,"",""
+195,Follower,218534,種族,0195_Follower.rb
+196,IDReserve,63856,tribe; job; 種族; 職業,0196_IDReserve.rb
+197,JobChange,325557,job; 種族; 職業; クラス; 転職; ジョブ,0197_JobChange.rb
+198,Library(Actor),404279,種族; 職業; 転職,0198_Library_Actor_.rb
+199,Library(Armor),0,"",""
+200,Library(BGM),37695,"",""
+201,Library(Enemy),1065725,種族; クラス,0201_Library_Enemy_.rb
+202,Library(H),1815238,種族,0202_Library_H_.rb
+203,Library(Item),298439,"",""
+204,Library(Medal),78526,種族; 職業; 転職,0204_Library_Medal_.rb
+205,Library(Place),16214,"",""
+206,Library(Weapon),0,"",""
+207,Present,23239762,種族,0207_Present.rb
+208,Sight,0,"",""
+209,SkillWords(Actor),48860608,種族; 職業; クラス; ジョブ,0209_SkillWords_Actor_.rb
+210,SkillWords(Enemy),0,"",""
+211,Synthesize,773965,種族; 職業,0211_Synthesize.rb
+212,Warp,0,"",""
+213,"",0,"",""
+214,【ひきも記】メッセージ制御文字拡張 Ver1.1,1575,職業,0214__Ver1.1.rb
+215,アイコンポップ Ver1.2,9224,"",""
+216,キャラクター表示拡張 Ver1.01,10789,"",""
+217,視界制限 Ver1.2,7072,職業,0217__Ver1.2.rb
+218,【DEICIDE ALMA】ターゲット拡張_102,10193,"",""
+219,【TYPE74RX-T】セルフスイッチの一括操作,1130,"",""
+220,"",0,"",""
+221,マップズーム,5525,"",""
+222,拡張選択肢 ver2,15479,"",""
+223,トリス情報表示関連 ver8,13602,tribe; job; class_id; 種族; 職業,0223__ver8.rb
+224,トリス簡易操作説明 ver5,6253,job,0224__ver5.rb
+225,トリス戦闘回想 ver10,17318,tribe; 種族; 職業,0225__ver10.rb
+226,SettingData処理 ver1,3133,"",""
+227,トリス能力倍率表示 ver1,3050,種族; 職業,0227__ver1.rb
+228,"",0,"",""
+229,セーブ不具合対処 ver7,8778,"",""
+230,システムセーブ不具合対処 ver2,5286,"",""
+231,セーブデータ異常修正 ver2,3280,"",""
+232,"",0,"",""
+233,トリスイベント検索 ver5,26455,職業,0233__ver5.rb
+234,トリスセーブ消失発生 ver1,910,"",""
+235,トリスパーティ人数検索 ver1,12412,"",""
+236,トリス加入演出確認 ver1,2633,"",""
+237,"",0,"",""
+238,const,2599,"",""
+239,t修正X ver4,22472,"",""
+240,修正10,133,"",""
+241,14/challenge_battle/enemy,427,"",""
+242,14/contents_builder,560,"",""
+243,14/display_param_give_unit,650,"",""
+244,14/global_love,1584,"",""
+245,14/library_h/struct,6152,"",""
+246,14/library_h/cg_view,3987,"",""
+247,14/library_h/window,1876,"",""
+248,14/library_h/manager,1998,"",""
+249,14/library_h/scene,1757,"",""
+250,14/library_h/scene_refine,718,"",""
+251,14/party_refine,348,"",""
+252,14/set_effect/ft,589,"",""
+253,14/set_effect/window,2450,"",""
+254,15/add_built_in,3485,subclass,0254_15_add_built_in.rb
+255,15/choicelist,464,"",""
+256,15/encount_region_change,1497,"",""
+257,15/eval_battler,2285,"",""
+258,15/favorite,148,"",""
+259,15/library_music,4078,"",""
+260,15/save_bitmap,6401,"",""
+261,15/skill_chain,1292,"",""
+262,15/socket_equip,5329,"",""
+263,15/state_check/window,1815,"",""
+264,15/turn_end_revive,376,"",""
+265,succubus,1912,"",""
+266,装備選択,1229,"",""
+267,追加/倉庫,10296,"",""
+268,追加/装備強化,16239,"",""
+269,表示追加,600,"",""
+270,スキル消去/SceneForgetMenuBase,1008,"",""
+271,スキル消去/SceneForget,991,"",""
+272,スキル消去/SceneForgetAbility,1577,"",""
+273,スキル消去/SceneForgetSkill,1985,"",""
+274,スキル消去/SceneInitSkill,1183,"",""
+275,スキル消去/Window,3320,"",""
+276,パーティ編成保存/add,248,"",""
+277,パーティ編成保存/ScenePartyForm,328,"",""
+278,パーティ編成保存/ScenePartyLoad,626,"",""
+279,パーティ編成保存/ScenePartySave,430,"",""
+280,パーティ編成保存/Window,1562,"",""
+281,パーティ分割/party,4973,"",""
+282,パーティ分割/scene,8134,"",""
+283,パーティ分割/window,4578,"",""
+284,アビリティ保存/scene_file,827,"",""
+285,アビリティ保存/add,435,"",""
+286,アビリティ保存/scene_load,1978,"",""
+287,アビリティ保存/scene_save,367,"",""
+288,アビリティ保存/scene_show_ability,2528,"",""
+289,アビリティ保存/window,2873,"",""
+290,last/equip_booster,336,"",""
+291,last/display_id,1469,tribe; job; subclass,0291_last_display_id.rb
+292,ｔ,3242,"",""
+293,テスト,2060,race,0293__.rb
+294,▽ パッチスクリプト読込 ver5,3819,patch,0294__ver5.rb
+295,gogr,0,"",""
+296,▼ メイン【WF-RGSS】Exit-EX 終了処理,7303,クラス,0296__WF-RGSS_Exit-EX_.rb
+297,"",0,"",""
+298,×Main,395,クラス,0298__Main.rb
+299,"",0,"",""

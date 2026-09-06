@@ -102,6 +102,18 @@ module ResearchMod
   GUIDING_THREAD_COMMON_EVENT_ID = 31
   # Original maid dialogue common event.
   MAID_DIALOGUE_COMMON_EVENT_ID = 111
+  MAID_DIALOGUE_RETURN_KEY = :@research_mod_maid_dialogue_return
+  CUSTOM_TEXTS_KEY = :@research_mod_custom_texts
+  SPECIAL_CATEGORY_NAMES = {
+    10 => 'Boss', 11 => '人类', 12 => '妖魔', 13 => '亚人',
+    14 => '淫魔', 15 => '吸血鬼', 16 => '人鱼', 17 => '精灵',
+    18 => '妖精', 19 => '史莱姆', 20 => '魔兽', 21 => '妖狐',
+    22 => '拉弥亚', 23 => '斯库拉', 24 => '鸟类', 25 => '龙',
+    26 => '陆栖种', 27 => '海栖种', 28 => '虫类', 29 => '植物',
+    30 => '僵尸', 31 => '幽灵', 32 => '人偶', 33 => '奇美拉',
+    34 => '天使', 35 => '凋亡种', 37 => '巨体', 38 => '机械',
+    39 => '梦魔', 40 => '飞行', 41 => '神', 42 => '魔王'
+  }
   CHEST_HINT_ENABLED_KEY = :@research_mod_chest_hint_enabled
   CHEST_HINT_VARIABLES_INITIALIZED_KEY =
     :@research_mod_chest_hint_variables_initialized
@@ -3566,6 +3578,73 @@ end
     nil
   rescue
     nil
+  end
+
+  def self.enemy_special_category_ids(enemy)
+    return [] unless enemy
+
+    database_enemy = enemy.respond_to?(:enemy) ? enemy.enemy : enemy
+    values = if database_enemy.respond_to?(:ex_category)
+               database_enemy.ex_category
+             else
+               note = database_enemy.respond_to?(:note) ? database_enemy.note.to_s : ''
+               match = note.match(/<特殊カテゴリー\s*([^>]+)>/)
+               match ? match[1].split(',').map(&:to_i) : []
+             end
+    Array(values).map(&:to_i).select { |id| SPECIAL_CATEGORY_NAMES.key?(id) }.uniq
+  rescue
+    []
+  end
+
+  def self.enemy_special_category_text(enemy)
+    ids = enemy_special_category_ids(enemy)
+    return '无' if ids.empty?
+
+    ids.map { |id| format('%s(%d)', SPECIAL_CATEGORY_NAMES[id], id) }.join('、')
+  end
+
+  def self.custom_texts
+    return {} unless $game_system
+
+    texts = $game_system.instance_variable_get(CUSTOM_TEXTS_KEY)
+    unless texts.is_a?(Hash)
+      texts = {}
+      $game_system.instance_variable_set(CUSTOM_TEXTS_KEY, texts)
+    end
+    texts
+  end
+
+  def self.custom_text(key)
+    custom_texts[key.to_sym].to_s
+  end
+
+  def self.set_custom_text(key, value)
+    custom_texts[key.to_sym] = value.to_s
+  end
+
+  # Request a one-time return to the research menu after maid dialogue ends.
+  def self.prepare_maid_dialogue_return
+    return unless $game_temp && $game_map
+
+    $game_temp.instance_variable_set(
+      MAID_DIALOGUE_RETURN_KEY,
+      { :map_id => $game_map.map_id, :wait => 2, :started => false }
+    )
+  end
+
+  def self.clear_maid_dialogue_return
+    return unless $game_temp
+
+    $game_temp.instance_variable_set(MAID_DIALOGUE_RETURN_KEY, nil)
+  end
+
+  # Open the reusable research-mod text input scene.
+  def self.open_text_input(key, title, default_text = '', max_chars = 16,
+                           help_text = nil, &result_handler)
+    SceneManager.call(Scene_ResearchModTextInput)
+    SceneManager.scene.prepare(
+      key, title, default_text, max_chars, help_text, result_handler
+    )
   end
 
   def self.enemy_follower_actor(enemy)
@@ -7204,13 +7283,13 @@ class Window_ResearchModBattleEnemyDetail < Window_ResearchModBattleStatusBase
   def window_height
     item_lines = @enemy ? ResearchMod.enemy_help_item_lines_for(@enemy).size : 6
     follower_lines = @enemy ? ResearchMod.enemy_follower_help_lines(@enemy).size : 1
-    [fitting_height(8 + follower_lines + item_lines), Graphics.height - 16].min
+    [fitting_height(9 + follower_lines + item_lines), Graphics.height - 16].min
   end
 
   def item_height
     item_lines = @enemy ? ResearchMod.enemy_help_item_lines_for(@enemy).size : 6
     follower_lines = @enemy ? ResearchMod.enemy_follower_help_lines(@enemy).size : 1
-    line_height * (8 + follower_lines + item_lines)
+    line_height * (9 + follower_lines + item_lines)
   end
 
   def make_command_list
@@ -7242,6 +7321,7 @@ class Window_ResearchModBattleEnemyDetail < Window_ResearchModBattleStatusBase
      ResearchMod.enemy_steal_text(enemy, 3),
      ResearchMod.enemy_steal_text(enemy, 4),
      ResearchMod.enemy_follower_help_lines(enemy),
+     ResearchMod.enemy_special_category_ids(enemy),
      ResearchMod.steal_always_success?,
      ResearchMod.drop_always_success?,
      enemy.states.map(&:id), buff_levels(enemy)]
@@ -7277,18 +7357,20 @@ class Window_ResearchModBattleEnemyDetail < Window_ResearchModBattleStatusBase
     battler_name = ResearchMod.enemy_battler_file_name(enemy)
     battler_name = '无' if battler_name.empty?
     draw_text(rect.x, rect.y + line_height * (detail_offset + 3), rect.width, line_height,
-              format('战斗图：%s', battler_name), 0)
+              format('种族：%s', ResearchMod.enemy_special_category_text(enemy)), 0)
     draw_text(rect.x, rect.y + line_height * (detail_offset + 4), rect.width, line_height,
-              format('状态：%s', state_text(enemy)), 0)
+              format('战斗图：%s', battler_name), 0)
     draw_text(rect.x, rect.y + line_height * (detail_offset + 5), rect.width, line_height,
+              format('状态：%s', state_text(enemy)), 0)
+    draw_text(rect.x, rect.y + line_height * (detail_offset + 6), rect.width, line_height,
               format('强化/弱化：%s', buff_text(enemy)), 0)
     cutin_names = ResearchMod.enemy_cutin_file_names(enemy)
     cutin_text = cutin_names.empty? ? '无' : cutin_names.join(', ')
-    draw_text(rect.x, rect.y + line_height * (detail_offset + 6), rect.width, line_height,
+    draw_text(rect.x, rect.y + line_height * (detail_offset + 7), rect.width, line_height,
               format('技能Cut-in：%s', cutin_text), 0)
     item_lines = ResearchMod.enemy_help_item_lines_for(enemy)
     item_lines.each_with_index do |text, item_index|
-      draw_text(rect.x, rect.y + line_height * (detail_offset + 7 + item_index), rect.width,
+      draw_text(rect.x, rect.y + line_height * (detail_offset + 8 + item_index), rect.width,
                 line_height, text, 0)
     end
   end
@@ -10798,6 +10880,7 @@ class Window_ResearchModCommand < Window_Command
     add_command('切换当前角色职业', :class)
     add_command('切换当前角色种族', :tribe)
     add_command('当前角色全职全种', :unlock_all)
+    add_command('修改当前角色名字', :actor_name)
     add_command('保存当前角色备份', :backup)
     add_command('恢复当前角色备份', :restore, ResearchMod.snapshot?(@actor))
     add_command('---------- 队伍 ----------', :separator, false)
@@ -11004,6 +11087,10 @@ class Window_ResearchModCommand < Window_Command
              '使用上下键移动；分割线不可操作。'
            when :actor
              '切换当前角色后，下面的当前角色修改项目会作用于新角色。'
+           when :actor_name
+             '输入当前角色的新名字。' + 10.chr +
+               '确定后立即写入角色数据并刷新显示。' + 10.chr +
+               '名字不能为空。'
            when :all_skill_learning
              '从数据库全部普通技能中选择技能并学习或忘记。' + 10.chr +
                '先选择武技、魔法、职技、魔物技或其他技能，再选择具体技能分类。' + 10.chr +
@@ -15419,6 +15506,7 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:class, method(:select_class))
     @command_window.set_handler(:tribe, method(:select_tribe))
     @command_window.set_handler(:unlock_all, method(:unlock_all))
+    @command_window.set_handler(:actor_name, method(:edit_current_actor_name))
     @command_window.set_handler(:set_all_love, method(:set_all_love))
     @command_window.set_handler(:recruit_all, method(:recruit_all))
     @command_window.set_handler(:actor_encyclopedia, method(:open_actor_encyclopedia))
@@ -16010,6 +16098,32 @@ class Scene_ResearchMod < Scene_MenuBase
     ResearchMod.unlock_all(@actor)
     @command_window.actor = @actor
     @command_window.activate
+  end
+
+  def edit_current_actor_name
+    actor = @actor
+    unless actor
+      @command_help_window.set_text('当前没有可修改名字的角色。')
+      @command_window.activate
+      return
+    end
+
+    ResearchMod.open_text_input(
+      :research_mod_actor_name,
+      '修改当前角色名字',
+      actor.name,
+      16,
+      "输入新的角色名字。\n确定后立即保存并刷新显示。\n名字不能为空。"
+    ) do |value|
+      name = value.to_s
+      if name.empty?
+        Sound.play_buzzer
+        false
+      else
+        actor.name = name
+        true
+      end
+    end
   end
 
   def set_all_love
@@ -20010,7 +20124,365 @@ class Scene_ResearchMod
       return
     end
 
+    ResearchMod.prepare_maid_dialogue_return
     $game_temp.reserve_common_event(ResearchMod::MAID_DIALOGUE_COMMON_EVENT_ID)
     SceneManager.goto(Scene_Map)
+  end
+end
+
+# Return to the research menu only when the maid common event ends on the same map.
+class Scene_Map < Scene_Base
+  alias research_mod_maid_return_update update
+
+  def update
+    research_mod_maid_return_update
+    research_mod_check_maid_dialogue_return
+  end
+
+  def research_mod_check_maid_dialogue_return
+    return if scene_changing?
+    return unless $game_temp
+
+    data = $game_temp.instance_variable_get(ResearchMod::MAID_DIALOGUE_RETURN_KEY)
+    return unless data.is_a?(Hash)
+
+    if $game_map.map_id != data[:map_id]
+      ResearchMod.clear_maid_dialogue_return
+      return
+    end
+
+    if $game_temp.common_event_reserved? || $game_map.interpreter.running?
+      data[:started] = true if $game_map.interpreter.running?
+      return
+    end
+
+    unless data[:started]
+      data[:wait] = data[:wait].to_i - 1
+      return if data[:wait] > 0
+      data[:started] = true
+    end
+
+    return if $game_message.busy? || $game_player.moving?
+
+    ResearchMod.clear_maid_dialogue_return
+    SceneManager.goto(Scene_ResearchMod)
+  rescue
+    ResearchMod.clear_maid_dialogue_return
+  end
+end
+
+# Add a reusable text-input test entry to the research menu.
+class Window_ResearchModCommand
+  alias research_mod_custom_text_make_command_list make_command_list
+  def make_command_list
+    research_mod_custom_text_make_command_list
+    add_command('自定义文字输入', :custom_text_input)
+    custom_command = @list.pop
+    database_index = @list.index { |entry| entry[:symbol] == :database_item }
+    insert_index = database_index ? database_index + 1 : @list.length
+    @list.insert(insert_index, custom_command)
+  end
+
+  alias research_mod_custom_text_update_help update_help
+  def update_help
+    research_mod_custom_text_update_help
+    return unless help_window && current_symbol == :custom_text_input
+
+    current = ResearchMod.custom_text(:research_mod_test_text)
+    current = '（空）' if current.empty?
+    help_window.set_text(
+      "从平假名、片假名或英数分类中选择字符。\n当前测试文字：#{current}\n确定后会保存到存档；留空可清除文字。"
+    )
+  end
+end
+
+class Scene_ResearchMod
+  alias research_mod_custom_text_start start
+  def start
+    research_mod_custom_text_start
+    @command_window.set_handler(:custom_text_input,
+                                method(:open_custom_text_input))
+  end
+
+  def open_custom_text_input
+    ResearchMod.open_text_input(
+      :research_mod_test_text,
+      '请输入自定义文字',
+      ResearchMod.custom_text(:research_mod_test_text),
+      16,
+      "从左侧选择平假名、片假名或英数；字符区取消可返回分类。\n" +
+      '确定保存，留空可清除文字。'
+    )
+  end
+end
+
+class Window_ResearchModTextCategory < Window_Command
+  def initialize(x, y, width)
+    @window_width = width
+    super(x, y)
+    select(0)
+  end
+
+  def window_width
+    @window_width
+  end
+
+  def visible_line_number
+    3
+  end
+
+  def make_command_list
+    add_command('平假名', :hiragana)
+    add_command('片假名', :katakana)
+    add_command('英数', :latin)
+  end
+end
+
+class Window_ResearchModCharacterInput < Window_Selectable
+  CHARACTER_COLUMNS = 9
+  HIRAGANA = (
+    'あ い う え お か き く け こ さ し す せ そ ' +
+    'た ち つ て と な に ぬ ね の は ひ ふ へ ほ ' +
+    'ま み む め も や ゆ よ ら り る れ ろ わ を ん ' +
+    'が ぎ ぐ げ ご ざ じ ず ぜ ぞ だ ぢ づ で ど ' +
+    'ば び ぶ べ ぼ ぱ ぴ ぷ ぺ ぽ ' +
+    'ぁ ぃ ぅ ぇ ぉ っ ゃ ゅ ょ ゎ ゔ ー'
+  ).split
+  KATAKANA = (
+    'ア イ ウ エ オ カ キ ク ケ コ サ シ ス セ ソ ' +
+    'タ チ ツ テ ト ナ ニ ヌ ネ ノ ハ ヒ フ ヘ ホ ' +
+    'マ ミ ム メ モ ヤ ユ ヨ ラ リ ル レ ロ ワ ヲ ン ' +
+    'ガ ギ グ ゲ ゴ ザ ジ ズ ゼ ゾ ダ ヂ ヅ デ ド ' +
+    'バ ビ ブ ベ ボ パ ピ プ ペ ポ ' +
+    'ァ ィ ゥ ェ ォ ッ ャ ュ ョ ヮ ヴ ヵ ヶ ー'
+  ).split
+  LATIN = ('A'..'Z').to_a + ('a'..'z').to_a + ('0'..'9').to_a +
+          ['!', '?', '.', ',', '-', '_', '+', '*', '/', '=', '@', '#',
+           '$', '%', '&', ':', ';', "'", '"', '(', ')', '[', ']']
+  ACTIONS = [:space, :back, :finish]
+
+  def initialize(edit_window, x, y, width, height)
+    @edit_window = edit_window
+    @category = :hiragana
+    @data = []
+    super(x, y, width, height)
+    set_category(@category)
+  end
+
+  def item_max
+    @data ? @data.size : 0
+  end
+
+  def col_max
+    CHARACTER_COLUMNS
+  end
+
+  def self.required_height
+    max_items = [HIRAGANA.size, KATAKANA.size, LATIN.size].max + ACTIONS.size
+    rows = (max_items + CHARACTER_COLUMNS - 1) / CHARACTER_COLUMNS
+    rows * 24 + 24
+  end
+
+  def spacing
+    4
+  end
+
+  # Move vertically with row-based wrap-around navigation.
+  def cursor_up(_wrap = false)
+    return if item_max <= 0
+
+    column = index % col_max
+    if index < col_max
+      last_row_start = ((item_max - 1) / col_max) * col_max
+      select([last_row_start + column, item_max - 1].min)
+    else
+      select(index - col_max)
+    end
+  end
+
+  # Move vertically with row-based wrap-around navigation.
+  def cursor_down(_wrap = false)
+    return if item_max <= 0
+
+    next_index = index + col_max
+    if next_index >= item_max
+      select([index % col_max, item_max - 1].min)
+    else
+      select(next_index)
+    end
+  end
+
+  def set_category(category)
+    @category = category
+    characters = case category
+                 when :katakana then KATAKANA
+                 when :latin then LATIN
+                 else HIRAGANA
+                 end
+    @data = characters + ACTIONS
+    self.top_row = 0
+    select(0)
+    refresh
+  end
+
+  def current_entry
+    @data[index]
+  end
+
+  def draw_item(index)
+    entry = @data[index]
+    rect = item_rect(index)
+    rect.width -= 4
+    text = case entry
+           when :space then '空格'
+           when :back then '删除'
+           when :finish then '确定'
+           else entry
+           end
+    draw_text(rect, text, 1)
+  end
+end
+
+class Window_ResearchModNameEdit < Window_NameEdit
+  def initialize(actor, max_char)
+    super
+    self.width = [Graphics.width - 112, 432].min
+    self.x = (Graphics.width - self.width) / 2
+    self.height = fitting_height(1)
+    create_contents
+    refresh
+    update_cursor
+  end
+
+  # Draw the editable text without the actor face shown by the original window.
+  def refresh
+    contents.clear
+    display_name = @name + (@index < @max_char ? '_' : '')
+    width = text_size(display_name).width
+    x = [(contents.width - width) / 2, 0].max
+    draw_text(x, 0, width, line_height, display_name)
+  end
+
+  def update_cursor
+    name_width = text_size(@name).width
+    display_width = text_size(@name + (@index < @max_char ? '_' : '')).width
+    x = [(contents.width - display_width) / 2 + name_width, 0].max
+    cursor_rect.set(x, 0, 24, line_height)
+  end
+end
+
+class Scene_ResearchModTextInput < Scene_MenuBase
+  def prepare(key, title, default_text = '', max_chars = 16, help_text = nil,
+              result_handler = nil)
+    @text_key = key.to_sym
+    @text_title = title.to_s
+    @default_text = default_text.to_s
+    @max_chars = [[max_chars.to_i, 1].max, 24].min
+    @help_text = help_text.nil? ? nil : help_text.to_s
+    @result_handler = result_handler
+  end
+
+  def start
+    super
+    @text_title ||= '请输入文字'
+    @default_text ||= ''
+    @max_chars ||= 16
+    @text_key ||= :research_mod_test_text
+    @help_text ||= (
+      "从左侧选择平假名、片假名或英数；字符区取消可返回分类。\n" +
+      "确定保存，留空可清除文字。最多 #{@max_chars} 个字符。"
+    )
+
+    @title_window = Window_Help.new(2)
+    @title_window.y = 0
+    @title_window.set_text([@text_title, @help_text].reject(&:empty?).join("\n"))
+
+    actor = $game_party.menu_actor || $game_party.members[0]
+    unless actor
+      return_scene
+      return
+    end
+
+    @edit_actor = actor.clone
+    @edit_actor.name = @default_text
+    @edit_window = Window_ResearchModNameEdit.new(@edit_actor, @max_chars)
+    @edit_window.y = @title_window.height
+
+    input_y = @edit_window.y + @edit_window.height
+    category_width = 112
+    input_height = [
+      Window_ResearchModCharacterInput.required_height,
+      Graphics.height - input_y
+    ].min
+    @category_window = Window_ResearchModTextCategory.new(
+      0, input_y, category_width
+    )
+    [:hiragana, :katakana, :latin].each do |symbol|
+      @category_window.set_handler(symbol, method(:on_category_ok))
+    end
+    @category_window.set_handler(:cancel, method(:on_input_cancel))
+
+    @input_window = Window_ResearchModCharacterInput.new(
+      @edit_window, category_width, input_y,
+      Graphics.width - category_width, input_height
+    )
+    @input_window.set_handler(:ok, method(:on_character_ok))
+    @input_window.set_handler(:cancel, method(:on_character_cancel))
+    @input_window.deactivate
+  end
+
+  def on_category_ok
+    @category_window.deactivate
+    @input_window.set_category(@category_window.current_symbol)
+    @input_window.activate
+  end
+
+  def on_character_ok
+    entry = @input_window.current_entry
+    case entry
+    when :space
+      add_character(' ')
+    when :back
+      Sound.play_cancel unless @edit_window.back
+    when :finish
+      on_input_ok
+      return
+    else
+      add_character(entry)
+    end
+    @input_window.activate
+  end
+
+  def add_character(character)
+    Sound.play_buzzer unless @edit_window.add(character)
+  end
+
+  def on_character_cancel
+    @input_window.deactivate
+    @category_window.activate
+  end
+
+  def on_input_ok
+    if @result_handler.respond_to?(:call)
+      accepted = @result_handler.call(@edit_window.name)
+      return if accepted == false
+    else
+      ResearchMod.set_custom_text(@text_key, @edit_window.name)
+    end
+    return_scene
+  end
+
+  def on_input_cancel
+    return_scene
+  end
+
+  def terminate
+    @title_window.dispose if @title_window && !@title_window.disposed?
+    @edit_window.dispose if @edit_window && !@edit_window.disposed?
+    if @category_window && !@category_window.disposed?
+      @category_window.dispose
+    end
+    @input_window.dispose if @input_window && !@input_window.disposed?
+    super
   end
 end
