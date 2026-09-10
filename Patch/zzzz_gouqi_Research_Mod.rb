@@ -101,6 +101,19 @@ module ResearchMod
   HARPY_FEATHER_PLACEHOLDER_NAME = '欠番'
   HARPY_FEATHER_ALL_PLACES_KEY = :@research_mod_harpy_feather_all_places
   GUIDING_THREAD_COMMON_EVENT_ID = 31
+  # Common events exposed by the event-call menu.
+  CAMP_COMMON_EVENT_ENTRIES = [
+    { :kind => :common_event, :id => 301, :name => '野営1' },
+    { :kind => :common_event, :id => 302, :name => '野営2' },
+    { :kind => :common_event, :id => 304, :name => '野営3' },
+    { :kind => :common_event, :id => 295, :name => '野営タルタロス' },
+    { :kind => :teleport, :map_id => 711, :x => 8, :y => 7,
+      :name => '野営（グランドノア前）' },
+    { :kind => :teleport, :map_id => 736, :x => 8, :y => 7,
+      :name => '野営（グランゴルド前）' },
+    { :kind => :teleport, :map_id => 741, :x => 8, :y => 7,
+      :name => '野営（イリアス神殿前）' }
+  ].freeze
   # Original maid dialogue common event.
   MAID_DIALOGUE_COMMON_EVENT_ID = 111
   MAID_DIALOGUE_RETURN_KEY = :@research_mod_maid_dialogue_return
@@ -10395,6 +10408,9 @@ class Window_ResearchModBattleEditTalkCategory < Window_Command
 
     if current_symbol == :select
       data = current_ext
+      # Older patch loaders can invoke this callback before setup assigns data.
+      return unless @enemy && data.is_a?(Hash) && data[:category]
+
       category = data[:category]
       previews = data[:entries].first(2).map do |entry|
         ResearchMod.battle_dialogue_display_text(entry[:preview], 90)
@@ -10460,6 +10476,9 @@ class Window_ResearchModBattleEditTalkList < Window_Command
 
     if current_symbol == :select
       entry = current_ext
+      # Older patch loaders can invoke this callback before setup assigns data.
+      return unless @enemy && entry.is_a?(Hash) && entry[:category]
+
       header = format('%s → %s　%s %02d', @actor ? @actor.name : '发起者',
                       @enemy.name, entry[:category],
                       entry[:talk_category_index].to_i)
@@ -23600,5 +23619,231 @@ class Scene_ResearchMod
   def start
     research_mod_achievement_start
     research_mod_setup_achievement_handler
+  end
+end
+
+# Expose selected original common events through a two-level research menu.
+class Window_ResearchModEventCategory < Window_Command
+  def initialize(help_window)
+    @help_window = help_window
+    super(0, 0)
+    self.z = 420
+    self.help_window = help_window
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def visible_line_number
+    3
+  end
+
+  def make_command_list
+    add_command('野营', :select, true, :camp)
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless @help_window && !@help_window.disposed?
+
+    text = current_symbol == :select ?
+      '选择野营后，可以调用原版野营公共事件。' : '返回研究修改器。'
+    @help_window.set_text(text)
+  end
+end
+
+class Window_ResearchModCampEventList < Window_Command
+  def initialize(help_window)
+    @help_window = help_window
+    super(0, 0)
+    self.z = 425
+    self.help_window = help_window
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def visible_line_number
+    6
+  end
+
+  def make_command_list
+    ResearchMod::CAMP_COMMON_EVENT_ENTRIES.each do |entry|
+      if entry[:kind] == :teleport
+        enabled = ResearchMod.teleport_target_valid?(entry[:map_id], entry[:x], entry[:y])
+        label = format('%s（地图 %d）', entry[:name], entry[:map_id])
+      else
+        common_event = $data_common_events && $data_common_events[entry[:id]]
+        enabled = !common_event.nil?
+        label = format('%s（公共事件 %d）', entry[:name], entry[:id])
+      end
+      add_command(label, :select, enabled, entry)
+    end
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless @help_window && !@help_window.disposed?
+
+    entry = current_ext
+    if entry && current_symbol == :select
+      if entry[:kind] == :teleport
+        valid = ResearchMod.teleport_target_valid?(entry[:map_id], entry[:x], entry[:y])
+        text = format('%s（地图 %d，坐标 %d,%d）\n%s',
+                      entry[:name], entry[:map_id], entry[:x], entry[:y],
+                      valid ? '进入原版野营地图。' : '目标地图或坐标无法读取。')
+        @help_window.set_text(text.gsub(92.chr + 'n', 10.chr))
+      else
+        common_event = $data_common_events && $data_common_events[entry[:id]]
+        if common_event
+          name = common_event.respond_to?(:name) ? common_event.name.to_s : ''
+          name = entry[:name] if name.empty?
+          @help_window.set_text(
+            format('%s（公共事件 %d）\n执行原版野营流程，可能改变地图、开关和变量。',
+                   name, entry[:id]).gsub(92.chr + 'n', 10.chr)
+          )
+        else
+          @help_window.set_text(format('无法读取公共事件 %d。', entry[:id]))
+        end
+      end
+    else
+      @help_window.set_text('返回野营分类。')
+    end
+  end
+end
+
+class Window_ResearchModCommand
+  alias research_mod_event_call_make_command_list make_command_list
+  def make_command_list
+    research_mod_event_call_make_command_list
+    add_command('调用事件', :event_call)
+    event_call_command = @list.pop
+    insert_index = @list.index { |entry| entry[:symbol] == :teleport }
+    insert_index ||= @list.length
+    @list.insert(insert_index, event_call_command)
+  end
+
+  alias research_mod_event_call_update_help update_help
+  def update_help
+    research_mod_event_call_update_help
+    return unless help_window && current_symbol == :event_call
+
+    help_window.set_text(
+      '调用选定的原版公共事件。当前分类为野营，确认后选择具体野营事件。'
+    )
+  end
+end
+
+class Scene_ResearchMod
+  alias research_mod_event_call_start start
+  def start
+    research_mod_event_call_start
+    @command_window.set_handler(:event_call, method(:open_event_call_menu))
+  end
+
+  alias research_mod_event_call_terminate terminate
+  def terminate
+    dispose_event_call_windows
+    research_mod_event_call_terminate
+  end
+
+  def open_event_call_menu
+    @event_call_help_window = Window_Help.new(3)
+    @event_call_help_window.y = Graphics.height - @event_call_help_window.height
+    @event_call_category_window = Window_ResearchModEventCategory.new(
+      @event_call_help_window
+    )
+    @event_call_category_window.set_handler(
+      :select, method(:select_event_call_category)
+    )
+    @event_call_category_window.set_handler(
+      :cancel, method(:close_event_call_menu)
+    )
+    @event_call_category_window.show
+    @event_call_category_window.activate
+    @command_window.deactivate
+  end
+
+  def select_event_call_category
+    return close_event_call_menu unless
+      @event_call_category_window.current_ext == :camp
+
+    @event_call_category_window.hide
+    @event_call_category_window.deactivate
+    @event_call_event_window = Window_ResearchModCampEventList.new(
+      @event_call_help_window
+    )
+    @event_call_event_window.set_handler(
+      :select, method(:execute_event_call)
+    )
+    @event_call_event_window.set_handler(
+      :cancel, method(:close_event_call_event_list)
+    )
+    @event_call_event_window.show
+    @event_call_event_window.activate
+  end
+
+  def close_event_call_event_list
+    defer_research_mod_window_dispose(@event_call_event_window)
+    @event_call_event_window = nil
+    @event_call_category_window.show
+    @event_call_category_window.activate
+    @event_call_category_window.update_help
+  end
+
+  def execute_event_call
+    entry = @event_call_event_window.current_ext
+    unless entry.is_a?(Hash)
+      Sound.play_buzzer
+      @event_call_event_window.activate
+      @event_call_help_window.set_text('无法读取所选野营事件。')
+      return
+    end
+
+    if entry[:kind] == :teleport
+      success = ResearchMod.reserve_teleport(
+        entry[:map_id], entry[:x], entry[:y]
+      )
+      unless success
+        Sound.play_buzzer
+        @event_call_event_window.activate
+        @event_call_help_window.set_text('目标地图或坐标无效，无法进入野营。')
+        return
+      end
+    else
+      event_id = entry[:id].to_i
+      common_event = $data_common_events && $data_common_events[event_id]
+      unless common_event && $game_temp &&
+             $game_temp.respond_to?(:reserve_common_event)
+        Sound.play_buzzer
+        @event_call_event_window.activate
+        @event_call_help_window.set_text(
+          format('无法读取或调用公共事件 %d。', event_id)
+        )
+        return
+      end
+      $game_temp.reserve_common_event(event_id)
+    end
+
+    close_event_call_menu
+    SceneManager.goto(Scene_Map)
+  end
+
+  def close_event_call_menu
+    dispose_event_call_windows
+    @command_window.activate if @command_window && !@command_window.disposed?
+  end
+
+  def dispose_event_call_windows
+    defer_research_mod_window_dispose(@event_call_event_window)
+    defer_research_mod_window_dispose(@event_call_category_window)
+    defer_research_mod_window_dispose(@event_call_help_window)
+    @event_call_event_window = nil
+    @event_call_category_window = nil
+    @event_call_help_window = nil
   end
 end
