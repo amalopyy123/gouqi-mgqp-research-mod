@@ -227,6 +227,27 @@ module ResearchMod
   BATTLE_RECORD_KEY = :@research_mod_battle_record
   BATTLE_EDITOR_KEY = :@research_mod_battle_editor
   FORCE_VICTORY_KEY = :@research_mod_force_victory
+  DEAD_BATTLE_EXP_KEY = :@research_mod_dead_battle_exp
+  PRIORITY_ENCOUNTER_ENABLED_KEY =
+    :@research_mod_priority_encounter_enabled
+  PRIORITY_ENCOUNTER_MODE_KEY = :@research_mod_priority_encounter_mode
+  PRIORITY_ENCOUNTER_BOSS_NEW_ONLY_KEY =
+    :@research_mod_priority_encounter_boss_new_only
+  PRIORITY_ENCOUNTER_TARGET_KEY = :@research_mod_priority_encounter_target
+  PRIORITY_ENCOUNTER_LAST_KEY = :@research_mod_priority_encounter_last
+  PRIORITY_ENCOUNTER_MODES = [:undiscovered, :unrecruited, :boss, :original]
+  AUTO_VICTORY_ENABLED_KEY = :@research_mod_auto_victory_enabled
+  AUTO_VICTORY_SKIP_BOSS_KEY = :@research_mod_auto_victory_skip_boss
+  AUTO_VICTORY_SKIP_UNRECRUITED_KEY =
+    :@research_mod_auto_victory_skip_unrecruited
+  AUTO_VICTORY_RANDOM_ONLY_KEY = :@research_mod_auto_victory_random_only
+  AUTO_VICTORY_EXP_RATE_KEY = :@research_mod_auto_victory_exp_rate
+  AUTO_VICTORY_CLASS_EXP_RATE_KEY =
+    :@research_mod_auto_victory_class_exp_rate
+  AUTO_VICTORY_LAST_RESULT_KEY = :@research_mod_auto_victory_last_result
+  AUTO_VICTORY_REWARD_ACTIVE_KEY =
+    :@research_mod_auto_victory_reward_active
+  AUTO_VICTORY_RATE_MAX = 9999
   TEMPTATION_IMMUNITY_KEY = :@research_mod_temptation_immunity
   TEMPTATION_STATE_ID = 26
   MOONLESS_DANCE_SKILL_ID = 9397
@@ -3315,6 +3336,578 @@ end
     enabled
   end
 
+  def self.dead_battle_exp_enabled?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(DEAD_BATTLE_EXP_KEY) == true
+  end
+
+  def self.toggle_dead_battle_exp
+    enabled = !dead_battle_exp_enabled?
+    $game_system.instance_variable_set(DEAD_BATTLE_EXP_KEY, enabled)
+    enabled
+  end
+
+  def self.dead_battle_exp_actor?(actor)
+    return false unless dead_battle_exp_enabled? && actor && $game_party
+    return false unless actor.respond_to?(:death_state?) && actor.death_state?
+
+    Array($game_party.all_members).include?(actor)
+  rescue
+    false
+  end
+
+  def self.without_death_state(actor)
+    states = actor.instance_variable_get(:@states)
+    death_id = actor.respond_to?(:death_state_id) ? actor.death_state_id : nil
+    return yield unless states.is_a?(Array) && death_id
+
+    snapshot = states.dup
+    states.delete(death_id)
+    yield
+  ensure
+    states.replace(snapshot) if snapshot && states.is_a?(Array)
+  end
+
+  def self.priority_encounter_enabled?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(PRIORITY_ENCOUNTER_ENABLED_KEY) == true
+  end
+
+  def self.toggle_priority_encounter
+    enabled = !priority_encounter_enabled?
+    $game_system.instance_variable_set(
+      PRIORITY_ENCOUNTER_ENABLED_KEY, enabled
+    )
+    enabled
+  end
+
+  def self.priority_encounter_mode
+    return :undiscovered unless $game_system
+
+    mode = $game_system.instance_variable_get(PRIORITY_ENCOUNTER_MODE_KEY)
+    PRIORITY_ENCOUNTER_MODES.include?(mode) ? mode : :undiscovered
+  end
+
+  def self.priority_encounter_mode_name(mode = priority_encounter_mode)
+    names = {
+      :undiscovered => '未遭遇',
+      :unrecruited => '未入队',
+      :boss => 'Boss',
+      :original => '原版随机'
+    }
+    names[mode] || names[:undiscovered]
+  end
+
+  def self.set_priority_encounter_mode(mode)
+    value = PRIORITY_ENCOUNTER_MODES.include?(mode) ? mode : :undiscovered
+    return value unless $game_system
+
+    $game_system.instance_variable_set(PRIORITY_ENCOUNTER_MODE_KEY, value)
+    value
+  end
+
+  def self.priority_encounter_boss_new_only?
+    auto_victory_boolean_setting(
+      PRIORITY_ENCOUNTER_BOSS_NEW_ONLY_KEY, true
+    )
+  end
+
+  def self.toggle_priority_encounter_boss_new_only
+    set_auto_victory_setting(
+      PRIORITY_ENCOUNTER_BOSS_NEW_ONLY_KEY,
+      !priority_encounter_boss_new_only?
+    )
+  end
+
+  def self.priority_encounter_target_id
+    return 0 unless $game_system
+
+    value = $game_system.instance_variable_get(PRIORITY_ENCOUNTER_TARGET_KEY)
+    [value.to_i, 0].max
+  end
+
+  def self.set_priority_encounter_target(enemy_id)
+    return 0 unless $game_system
+
+    value = [enemy_id.to_i, 0].max
+    $game_system.instance_variable_set(PRIORITY_ENCOUNTER_TARGET_KEY, value)
+    value
+  end
+
+  def self.priority_encounter_target_text
+    enemy_id = priority_encounter_target_id
+    return '无' if enemy_id <= 0
+
+    enemy = $data_enemies[enemy_id] if defined?($data_enemies)
+    name = enemy ? enemy.name.to_s : '未知敌人'
+    name = battle_dialogue_display_text(name, 16, 40)
+    format('E%d %s', enemy_id, name)
+  end
+
+  def self.priority_encounter_enemy_join_text(enemy_id)
+    enemy = $data_enemies[enemy_id.to_i] if defined?($data_enemies)
+    actor_id = enemy_follower_actor_id(enemy)
+    return '不可入队' unless actor_id && actor_id > 0
+
+    enemy_follower_status_text(actor_id)
+  rescue
+    '无法判断'
+  end
+
+  def self.priority_encounter_first_member_text(troop)
+    return '无有效成员' unless troop && troop.respond_to?(:members)
+
+    member = troop.members.to_a.find do |entry|
+      entry && entry.enemy_id.to_i > 0 && $data_enemies[entry.enemy_id.to_i]
+    end
+    return '无有效成员' unless member
+
+    enemy_id = member.enemy_id.to_i
+    enemy = $data_enemies[enemy_id]
+    name = battle_dialogue_display_text(enemy.name.to_s, 10, 24)
+    status = priority_encounter_enemy_join_text(enemy_id)
+    format('E%d %s：%s', enemy_id, name, status)
+  rescue
+    '无法判断'
+  end
+
+  def self.priority_encounter_last_result
+    return '尚无选择记录' unless $game_system
+
+    text = $game_system.instance_variable_get(
+      PRIORITY_ENCOUNTER_LAST_KEY
+    ).to_s
+    text.empty? ? '尚无选择记录' : text
+  end
+
+  def self.set_priority_encounter_last_result(text)
+    return unless $game_system
+
+    value = battle_dialogue_display_text(text.to_s, 32, 80)
+    $game_system.instance_variable_set(PRIORITY_ENCOUNTER_LAST_KEY, value)
+  end
+
+  def self.priority_encounter_entries
+    return [] unless $game_map && $game_player
+    return [] unless $game_map.respond_to?(:encounter_list)
+
+    result = []
+    $game_map.encounter_list.to_a.each do |encounter|
+      next unless encounter
+      next unless priority_encounter_entry_allowed?(encounter)
+
+      troop = $data_troops[encounter.troop_id.to_i]
+      next unless troop && !priority_encounter_enemy_ids(troop).empty?
+      next unless encounter.weight.to_i > 0
+
+      result << { :encounter => encounter, :troop => troop }
+    end
+    result
+  rescue
+    []
+  end
+
+  def self.priority_encounter_entry_allowed?(encounter)
+    return false unless $game_player.respond_to?(:encounter_ok?)
+
+    $game_player.encounter_ok?(encounter)
+  rescue
+    false
+  end
+
+  def self.priority_encounter_enemy_ids(troop)
+    return [] unless troop && troop.respond_to?(:members)
+
+    troop.members.to_a.map { |member| member.enemy_id.to_i }.select do |id|
+      id > 0 && $data_enemies[id]
+    end.uniq
+  rescue
+    []
+  end
+
+  def self.priority_encounter_enemy_discovered?(enemy_id)
+    return false unless $game_library && $game_library.respond_to?(:enemy)
+
+    library = $game_library.enemy
+    library.respond_to?(:discovery?) && library.discovery?(enemy_id.to_i)
+  rescue
+    false
+  end
+
+  def self.priority_encounter_enemy_unrecruited?(enemy_id)
+    enemy = $data_enemies[enemy_id.to_i]
+    actor_id = enemy_follower_actor_id(enemy)
+    actor_id && actor_id > 0 && !auto_victory_actor_recruited?(actor_id)
+  rescue
+    false
+  end
+
+  def self.priority_encounter_enemy_boss?(enemy_id)
+    enemy = $data_enemies[enemy_id.to_i]
+    enemy && auto_victory_boss_enemy?(enemy)
+  rescue
+    false
+  end
+
+  def self.priority_encounter_entry_match?(entry, mode)
+    ids = priority_encounter_enemy_ids(entry[:troop])
+    case mode
+    when :undiscovered
+      ids.any? { |id| !priority_encounter_enemy_discovered?(id) }
+    when :unrecruited
+      ids.any? { |id| priority_encounter_enemy_unrecruited?(id) }
+    when :boss
+      ids.any? do |id|
+        next false unless priority_encounter_enemy_boss?(id)
+
+        !priority_encounter_boss_new_only? ||
+          !priority_encounter_enemy_discovered?(id)
+      end
+    else
+      false
+    end
+  end
+
+  def self.priority_encounter_weighted_troop_id(entries)
+    valid = entries.select do |entry|
+      entry[:encounter].weight.to_i > 0
+    end
+    total = valid.inject(0) do |sum, entry|
+      sum + entry[:encounter].weight.to_i
+    end
+    return nil if total <= 0
+
+    value = rand(total)
+    valid.each do |entry|
+      value -= entry[:encounter].weight.to_i
+      return entry[:troop].id.to_i if value < 0
+    end
+    nil
+  end
+
+  def self.priority_encounter_pick
+    entries = priority_encounter_entries
+    return [nil, nil] if entries.empty?
+
+    target_id = priority_encounter_target_id
+    if target_id > 0
+      matches = entries.select do |entry|
+        priority_encounter_enemy_ids(entry[:troop]).include?(target_id)
+      end
+      troop_id = priority_encounter_weighted_troop_id(matches)
+      return [troop_id, format('手动E%d', target_id)] if troop_id
+    end
+
+    mode = priority_encounter_mode
+    unless mode == :original
+      matches = entries.select do |entry|
+        priority_encounter_entry_match?(entry, mode)
+      end
+      troop_id = priority_encounter_weighted_troop_id(matches)
+      return [troop_id, priority_encounter_mode_name(mode)] if troop_id
+    end
+    [nil, nil]
+  rescue
+    [nil, nil]
+  end
+
+  def self.priority_encounter_candidates
+    groups = {}
+    priority_encounter_entries.each do |entry|
+      troop = entry[:troop]
+      data = groups[troop.id] ||= {
+        :troop => troop, :weight => 0, :enemy_ids => []
+      }
+      data[:weight] += entry[:encounter].weight.to_i
+      data[:enemy_ids] |= priority_encounter_enemy_ids(troop)
+    end
+    groups.values.sort_by { |data| data[:troop].id.to_i }
+  end
+
+  def self.priority_encounter_enemy_candidates
+    ids = priority_encounter_candidates.inject([]) do |result, data|
+      result | data[:enemy_ids]
+    end
+    ids.map { |id| $data_enemies[id] }.compact.sort_by(&:id)
+  end
+
+  def self.priority_encounter_candidate_flags(data)
+    ids = data[:enemy_ids]
+    flags = []
+    if ids.any? { |id| !priority_encounter_enemy_discovered?(id) }
+      flags << '未遭遇'
+    end
+    if ids.any? { |id| priority_encounter_enemy_unrecruited?(id) }
+      flags << '未入队'
+    end
+    if ids.any? { |id| priority_encounter_enemy_boss?(id) }
+      flags << 'Boss'
+    end
+    flags.empty? ? '普通' : flags.join('／')
+  end
+
+  def self.priority_encounter_troop_name(troop)
+    return '[无名称敌群]' unless troop
+
+    name = troop.name.to_s.gsub(/<BGM(?::|：)[^>]*>/i, '').strip
+    name.empty? ? '[无名称敌群]' : name
+  end
+
+  def self.priority_encounter_rule_status(data)
+    ids = data[:enemy_ids]
+    undiscovered = ids.any? do |id|
+      !priority_encounter_enemy_discovered?(id)
+    end
+    unrecruited = ids.any? do |id|
+      priority_encounter_enemy_unrecruited?(id)
+    end
+    boss = ids.any? { |id| priority_encounter_enemy_boss?(id) }
+    {
+      :undiscovered => undiscovered,
+      :unrecruited => unrecruited,
+      :boss => boss
+    }
+  end
+
+  def self.priority_encounter_current_rule_text(data)
+    mode = priority_encounter_mode
+    name = priority_encounter_mode_name(mode)
+    return format('%s（不筛选）', name) if mode == :original
+
+    matched = priority_encounter_entry_match?(data, mode)
+    format('%s（%s）', name, matched ? '符合' : '不符合')
+  end
+
+  def self.priority_encounter_region_text
+    return '当前位置不可用' unless $game_map && $game_player
+
+    region = if $game_player.respond_to?(:encount_region)
+               $game_player.encount_region
+             else
+               $game_player.region_id
+             end
+    format('地图%d／区块%d', $game_map.map_id.to_i, region.to_i)
+  rescue
+    '当前区块读取失败'
+  end
+
+  def self.auto_victory_enabled?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(AUTO_VICTORY_ENABLED_KEY) == true
+  end
+
+  def self.toggle_auto_victory
+    set_auto_victory_setting(
+      AUTO_VICTORY_ENABLED_KEY, !auto_victory_enabled?
+    )
+  end
+
+  def self.auto_victory_skip_boss?
+    auto_victory_boolean_setting(AUTO_VICTORY_SKIP_BOSS_KEY, true)
+  end
+
+  def self.toggle_auto_victory_skip_boss
+    set_auto_victory_setting(
+      AUTO_VICTORY_SKIP_BOSS_KEY, !auto_victory_skip_boss?
+    )
+  end
+
+  def self.auto_victory_skip_unrecruited?
+    auto_victory_boolean_setting(
+      AUTO_VICTORY_SKIP_UNRECRUITED_KEY, true
+    )
+  end
+
+  def self.toggle_auto_victory_skip_unrecruited
+    set_auto_victory_setting(
+      AUTO_VICTORY_SKIP_UNRECRUITED_KEY,
+      !auto_victory_skip_unrecruited?
+    )
+  end
+
+  def self.auto_victory_random_only?
+    auto_victory_boolean_setting(AUTO_VICTORY_RANDOM_ONLY_KEY, true)
+  end
+
+  def self.toggle_auto_victory_random_only
+    set_auto_victory_setting(
+      AUTO_VICTORY_RANDOM_ONLY_KEY, !auto_victory_random_only?
+    )
+  end
+
+  def self.auto_victory_exp_rate
+    auto_victory_rate(AUTO_VICTORY_EXP_RATE_KEY)
+  end
+
+  def self.auto_victory_class_exp_rate
+    auto_victory_rate(AUTO_VICTORY_CLASS_EXP_RATE_KEY)
+  end
+
+  def self.set_auto_victory_exp_rate(value)
+    set_auto_victory_rate(AUTO_VICTORY_EXP_RATE_KEY, value)
+  end
+
+  def self.set_auto_victory_class_exp_rate(value)
+    set_auto_victory_rate(AUTO_VICTORY_CLASS_EXP_RATE_KEY, value)
+  end
+
+  def self.auto_victory_last_result
+    return '尚无判定记录' unless $game_system
+
+    text = $game_system.instance_variable_get(
+      AUTO_VICTORY_LAST_RESULT_KEY
+    ).to_s
+    text.empty? ? '尚无判定记录' : text
+  end
+
+  def self.set_auto_victory_last_result(text)
+    return unless $game_system
+
+    $game_system.instance_variable_set(
+      AUTO_VICTORY_LAST_RESULT_KEY, text.to_s
+    )
+  end
+
+  def self.auto_victory_decision
+    return [false, '跳过：总开关关闭'] unless auto_victory_enabled?
+    return [false, '跳过：战斗测试'] if defined?($BTEST) && $BTEST
+    if BattleManager.respond_to?(:memory_battle?) &&
+       BattleManager.memory_battle?
+      return [false, '跳过：回想战斗']
+    end
+    if BattleManager.respond_to?(:research_mod_custom_battle?) &&
+       BattleManager.research_mod_custom_battle?
+      return [false, '跳过：研究模拟战']
+    end
+    if $game_troop && $game_troop.respond_to?(:challenge_battle?) &&
+       $game_troop.challenge_battle?
+      return [false, '跳过：挑战战斗']
+    end
+    if auto_victory_random_only? &&
+       (!BattleManager.respond_to?(:research_mod_random_encounter?) ||
+        !BattleManager.research_mod_random_encounter?)
+      return [false, '跳过：不是随机遇敌']
+    end
+
+    enemies = $game_troop ? $game_troop.members.compact : []
+    return [false, '跳过：没有有效敌人'] if enemies.empty?
+
+    if auto_victory_skip_boss?
+      boss = enemies.find do |enemy|
+        auto_victory_boss_enemy?(enemy)
+      end
+      return [false, auto_victory_enemy_reason('Boss', boss)] if boss
+    end
+
+    if auto_victory_skip_unrecruited?
+      enemy = enemies.find do |member|
+        actor_id = enemy_follower_actor_id(member)
+        actor_id && actor_id > 0 && !auto_victory_actor_recruited?(actor_id)
+      end
+      if enemy
+        return [false, auto_victory_enemy_reason('尚未入队', enemy)]
+      end
+    end
+
+    [true, '已执行：符合自动胜利条件']
+  rescue => error
+    [false, format('跳过：判定异常 %s', error.class)]
+  end
+
+  def self.auto_victory_actor_recruited?(actor_id)
+    return false unless $game_party
+
+    id = actor_id.to_i
+    party_ids = $game_party.respond_to?(:actors) ?
+                  $game_party.actors.to_a.map(&:to_i) : []
+    return true if party_ids.include?(id)
+
+    reserve_ids = $game_party.respond_to?(:stand_actors) ?
+                    $game_party.stand_actors.to_a.map(&:to_i) : []
+    return true if reserve_ids.include?(id)
+
+    $game_party.respond_to?(:follow?) && $game_party.follow?(id)
+  rescue
+    false
+  end
+
+  def self.auto_victory_boss_enemy?(enemy)
+    return true if enemy_special_category_ids(enemy).include?(10)
+
+    database_enemy = enemy.respond_to?(:enemy) ? enemy.enemy : enemy
+    return false unless database_enemy &&
+                        database_enemy.respond_to?(:base_enemy)
+
+    base_enemy = database_enemy.base_enemy
+    base_enemy && enemy_special_category_ids(base_enemy).include?(10)
+  rescue
+    false
+  end
+
+  def self.auto_victory_enemy_reason(reason, enemy)
+    enemy_id = enemy.respond_to?(:enemy_id) ? enemy.enemy_id.to_i : 0
+    name = enemy.respond_to?(:name) ? enemy.name.to_s : ''
+    name = battle_dialogue_display_text(name, 18, 48)
+    format('跳过：%s E%d %s', reason, enemy_id, name)
+  end
+
+  def self.begin_auto_victory_reward
+    return unless $game_temp
+
+    $game_temp.instance_variable_set(AUTO_VICTORY_REWARD_ACTIVE_KEY, true)
+  end
+
+  def self.end_auto_victory_reward
+    return unless $game_temp
+
+    $game_temp.instance_variable_set(AUTO_VICTORY_REWARD_ACTIVE_KEY, nil)
+  end
+
+  def self.auto_victory_reward_active?
+    $game_temp && $game_temp.instance_variable_get(
+      AUTO_VICTORY_REWARD_ACTIVE_KEY
+    ) == true
+  end
+
+  def self.apply_auto_victory_reward_rate(value, rate)
+    return value unless auto_victory_reward_active?
+
+    value.to_i * rate.to_i / 100
+  end
+
+  def self.auto_victory_boolean_setting(key, default)
+    return default unless $game_system
+    return default unless $game_system.instance_variable_defined?(key)
+
+    $game_system.instance_variable_get(key) == true
+  end
+
+  def self.set_auto_victory_setting(key, value)
+    return false unless $game_system
+
+    $game_system.instance_variable_set(key, !!value)
+    !!value
+  end
+
+  def self.auto_victory_rate(key)
+    return 100 unless $game_system
+
+    value = $game_system.instance_variable_get(key)
+    value = 100 if value.nil?
+    [[value.to_i, AUTO_VICTORY_RATE_MAX].min, 0].max
+  end
+
+  def self.set_auto_victory_rate(key, value)
+    return 100 unless $game_system
+
+    rate = [[value.to_i, AUTO_VICTORY_RATE_MAX].min, 0].max
+    $game_system.instance_variable_set(key, rate)
+    rate
+  end
+
   def self.temptation_immunity?
     return false unless $game_system
 
@@ -4963,7 +5556,12 @@ end
     current_name = enemy.name.to_s
     groups = event_message_groups(block)
     failure = groups.reverse.find do |group|
-      group[:lines].any? { |line| line.include?('搾れなかった') }
+      group[:lines].any? do |line|
+        text = line.to_s
+        text.include?('搾れなかった') ||
+          text.include?('没能挤出乳汁') ||
+          text.include?('挤不出乳汁')
+      end
     end
     failure ||= groups.last if groups.size > 1 && groups.last[:face_name].empty?
     reaction_groups = groups.select do |group|
@@ -5107,6 +5705,15 @@ end
       source_label = category[:source_label]
       categories[source_label] = category if source_label
     end
+    # Embedded Chinese data translates the category labels stored in event commands.
+    {
+      '情报' => :information, '信息' => :information,
+      '提问' => :question, '问题' => :question,
+      '赠与' => :gift
+    }.each do |source_label, key|
+      category = TALK_EVENT_CATEGORIES.find { |entry| entry[:key] == key }
+      categories[source_label] = category if category
+    end
     current_category = nil
     standard_category_found = false
     category_counts = Hash.new(0)
@@ -5157,7 +5764,7 @@ end
       command.instance_variable_get(:@code) == 401
     end
     if !standard_category_found && direct_message_found &&
-       event_name.start_with?('会話：')
+       talk_event_name?(event_name)
       refusal_category = TALK_EVENT_CATEGORIES.find do |category|
         category[:key] == :refusal
       end
@@ -5186,6 +5793,13 @@ end
     entries
   rescue
     []
+  end
+
+  def self.talk_event_name?(name)
+    value = name.to_s
+    ['会話：', '会話:', '对话：', '对话:'].any? do |prefix|
+      value.start_with?(prefix)
+    end
   end
 
   def self.enemy_special_common_event_entries(enemy)
@@ -5394,7 +6008,7 @@ end
     return nil unless event
 
     name = event.instance_variable_get(:@name).to_s
-    name.start_with?('誘惑：') ? event : nil
+    name.start_with?('誘惑：', '誘惑:', '诱惑：', '诱惑:') ? event : nil
   rescue
     nil
   end
@@ -6157,9 +6771,29 @@ end
   end
 
   def self.persona_dialogue_menu?(var_id, names)
-    return false unless var_id == PERSONA_DIALOGUE_VARIABLE_ID
+    return false unless var_id.to_i == PERSONA_DIALOGUE_VARIABLE_ID
 
-    PERSONA_DIALOGUE_BASE_MENU_TEXTS.all? { |text| names.include?(text) }
+    normalized = Array(names).map { |name| name.to_s.strip }
+    return true if PERSONA_DIALOGUE_BASE_MENU_TEXTS.all? { |text| normalized.include?(text) }
+
+    # The embedded Chinese release translates event choice labels in the data.
+    has_gift = normalized.any? do |text|
+      text.include?('プレゼント') || text.include?('礼物')
+    end
+    has_gift_list = normalized.any? do |text|
+      text.include?('リスト') || text.include?('列表')
+    end
+    has_cancel = normalized.any? { |text| persona_dialogue_cancel_text?(text) }
+    has_gift && (has_gift_list || has_cancel)
+  end
+
+  def self.persona_dialogue_pleading_text?(text)
+    value = text.to_s.strip
+    value == 'おねだりする' || value.include?('撒娇')
+  end
+
+  def self.persona_dialogue_cancel_text?(text)
+    %w[やめる 放弃 取消].include?(text.to_s.strip)
   end
 
   def self.candidate_dialogue_menu?(var_id, names)
@@ -7457,7 +8091,8 @@ class Game_Battler
     @result.stealed_item_empty = list.empty? ? true : false
     return if $game_switches[NWConst::Sw::STEAL_FAIL]
 
-    steal = list.sort { |a, b| b[:denominator] <=> a[:denominator] }.first
+    # Choose one remaining item with equal probability.
+    steal = list.empty? ? nil : list[rand(list.size)]
     return unless steal
 
     $game_library.count_up_actor_steal(user.id)
@@ -7523,7 +8158,8 @@ class Game_Enemy
     @result.stealed_item_empty = list.empty?
     return if $game_switches[NWConst::Sw::STEAL_FAIL]
 
-    steal = list.sort { |a, b| b[:denominator] <=> a[:denominator] }.first
+    # Choose one remaining item with equal probability.
+    steal = list.empty? ? nil : list[rand(list.size)]
     return unless steal
 
     $game_library.count_up_actor_steal(user.id)
@@ -7964,7 +8600,7 @@ class Game_Interpreter
       @branch[@indent] = 0
       @research_mod_pleading_force_insufficient = true
     elsif selected && selected < original_choices.size &&
-          original_choices[selected].to_s != 'やめる'
+          !ResearchMod.persona_dialogue_cancel_text?(original_choices[selected])
       ResearchMod.set_maoujou_pleading_suppression(true)
       @research_mod_pleading_force_success = true
     else
@@ -8204,7 +8840,7 @@ class Game_Interpreter
 
   def unlimited_choices(var_id, names)
     pleading_menu_names = names.is_a?(Array) && names.any? do |name|
-      name.to_s.include?('おねだりする')
+      ResearchMod.persona_dialogue_pleading_text?(name)
     end
     if pleading_menu_names
       if ResearchMod.maoujou_pleading_request_pending? &&
@@ -8215,7 +8851,7 @@ class Game_Interpreter
       end
     end
     if ResearchMod.maoujou_pleading_suppression? &&
-       names.include?('おねだりする') &&
+       names.any? { |name| ResearchMod.persona_dialogue_pleading_text?(name) } &&
        ResearchMod.persona_dialogue_menu?(var_id, names)
       ResearchMod.set_maoujou_pleading_suppression(false)
     end
@@ -8242,7 +8878,7 @@ class Game_Interpreter
                    ResearchMod.persona_dialogue_menu?(var_id, names)
     pleading_enabled = ResearchMod.maoujou_pleading_dialogue_compatibility? &&
                        ResearchMod.persona_dialogue_menu?(var_id, names) &&
-                       names.include?('おねだりする')
+                       names.any? { |name| ResearchMod.persona_dialogue_pleading_text?(name) }
     remove_candidate_enabled = ResearchMod.maoujou_remove_candidate_compatibility? &&
                                ResearchMod.persona_dialogue_menu?(var_id, names)
     dialogue_enabled = !candidate_entries.empty? || !ring_entries.empty?
@@ -8253,7 +8889,7 @@ class Game_Interpreter
 
     choices = names.dup
     inserted_actions = []
-    quit_index = choices.index("やめる") || choices.size
+    quit_index = choices.index { |name| ResearchMod.persona_dialogue_cancel_text?(name) } || choices.size
     if persona_enabled
       choices.insert(quit_index, ResearchMod::RESEARCH_PERSONA_DIALOGUE_MENU_TEXT)
       inserted_actions << [quit_index, :persona]
@@ -8303,14 +8939,14 @@ class Game_Interpreter
         @research_mod_pleading_request_menu = true
         ResearchMod.set_maoujou_pleading_request_pending(true)
         $game_temp.instance_variable_set(:@research_mod_pleading_request_menu, true) if $game_temp
-        $game_variables[var_id] = names.index('おねだりする') || names.size
+        $game_variables[var_id] = names.index { |name| ResearchMod.persona_dialogue_pleading_text?(name) } || names.size
         return
       elsif action == :remove_candidate
         research_mod_remove_candidate
       else
         research_mod_choose_candidate_dialogue(candidate_entries, ring_entries)
       end
-      $game_variables[var_id] = names.index("やめる") || names.size
+      $game_variables[var_id] = names.index { |name| ResearchMod.persona_dialogue_cancel_text?(name) } || names.size
     elsif selected_index
       ResearchMod.set_maoujou_pleading_request_pending(false)
       ResearchMod.set_maoujou_pleading_choice_mode(nil)
@@ -8398,7 +9034,7 @@ class Game_Interpreter
       # Stop at the next top-level menu marker so another NPC's menu is not
       # accidentally included in the current speaker list.
       break if index > current_index && code == 119 &&
-                params[0].to_s == 'メニュー'
+                ['メニュー', '菜单'].include?(params[0].to_s)
     end
     ids.select! do |id|
       actor = $data_actors[id]
@@ -8861,6 +9497,28 @@ class Game_Battler < Game_BattlerBase
               ResearchMod.temptation_immunity?
 
     research_mod_temptation_immunity_add_new_state(state_id)
+  end
+end
+
+class Game_Actor
+  # Keep defeated party actors eligible for battle rewards when enabled.
+  alias research_mod_dead_exp_final_exp_rate final_exp_rate
+  alias research_mod_dead_exp_final_cexp_rate final_cexp_rate
+
+  def final_exp_rate
+    return research_mod_dead_exp_final_exp_rate unless ResearchMod.dead_battle_exp_actor?(self)
+
+    ResearchMod.without_death_state(self) do
+      research_mod_dead_exp_final_exp_rate
+    end
+  end
+
+  def final_cexp_rate
+    return research_mod_dead_exp_final_cexp_rate unless ResearchMod.dead_battle_exp_actor?(self)
+
+    ResearchMod.without_death_state(self) do
+      research_mod_dead_exp_final_cexp_rate
+    end
   end
 end
 
@@ -13244,6 +13902,17 @@ class Window_ResearchModCommand < Window_Command
     add_command('任意地图传送', :teleport)
     add_command('自定义传送点', :custom_teleport_points)
     add_command('地图与事件检查', :map_inspector)
+    add_command('---------- 战斗 ----------', :separator, false)
+    add_command('敌人资料与战斗', :custom_battle)
+    add_command('战败事件查看', :lose_event)
+    add_command(ResearchMod::REFLECTION_MEETING_MENU_NAME, :reflection_meeting)
+    add_command('显示敌方信息：' + (ResearchMod.battle_enemy_status? ? '已开启' : '已关闭'), :battle_enemy_status)
+    add_command('显示我方信息：' + (ResearchMod.battle_party_status? ? '已开启' : '已关闭'), :battle_party_status)
+    add_command('显示双方Cut-in：' + (ResearchMod.battle_cutin_view? ? '已开启' : '已关闭'), :battle_cutin_view)
+    add_command('显示战斗记录：' + (ResearchMod.battle_record_enabled? ? '已开启' : '已关闭'), :battle_record)
+    add_command('显示对白模拟：' + (ResearchMod.manual_enemy_dialogue? ? '已开启' : '已关闭'), :manual_enemy_dialogue)
+    add_command('显示战斗修改菜单：' + (ResearchMod.battle_editor_enabled? ? '已开启' : '已关闭'), :battle_editor)
+    add_command('战斗强制胜利：' + (ResearchMod.force_victory_enabled? ? '已开启' : '已关闭'), :force_victory)
     add_command('---------- 当前角色修改 ----------', :separator, false)
     add_command('切换当前角色：' + @actor.name, :actor)
     add_command(format('严格同步当前人物等级：%d', @actor.base_level), :level)
@@ -13286,17 +13955,6 @@ class Window_ResearchModCommand < Window_Command
     add_command('当前音乐信息', :audio_info)
     add_command('当前音乐悬浮窗：' + (ResearchMod.audio_overlay_enabled? ? '已开启' : '已关闭'), :audio_overlay)
     add_command('图片资源覆盖：' + (ResearchMod.graphics_override_enabled? ? '已开启' : '已关闭'), :graphics_override)
-    add_command('---------- 战斗 ----------', :separator, false)
-    add_command('敌人资料与战斗', :custom_battle)
-    add_command('战败事件查看', :lose_event)
-    add_command(ResearchMod::REFLECTION_MEETING_MENU_NAME, :reflection_meeting)
-    add_command('显示敌方信息：' + (ResearchMod.battle_enemy_status? ? '已开启' : '已关闭'), :battle_enemy_status)
-    add_command('显示我方信息：' + (ResearchMod.battle_party_status? ? '已开启' : '已关闭'), :battle_party_status)
-    add_command('显示双方Cut-in：' + (ResearchMod.battle_cutin_view? ? '已开启' : '已关闭'), :battle_cutin_view)
-    add_command('显示战斗记录：' + (ResearchMod.battle_record_enabled? ? '已开启' : '已关闭'), :battle_record)
-    add_command('显示对白模拟：' + (ResearchMod.manual_enemy_dialogue? ? '已开启' : '已关闭'), :manual_enemy_dialogue)
-    add_command('显示战斗修改菜单：' + (ResearchMod.battle_editor_enabled? ? '已开启' : '已关闭'), :battle_editor)
-    add_command('战斗强制胜利：' + (ResearchMod.force_victory_enabled? ? '已开启' : '已关闭'), :force_victory)
     add_command('---------- 消耗 ----------', :separator, false)
     add_command('消耗类技能开关', :consumption)
     add_command('无消耗料理', :free_cooking)
@@ -13307,6 +13965,7 @@ class Window_ResearchModCommand < Window_Command
     add_command('牛奶获取必定成功：' + (ResearchMod.milk_always_success? ? '已开启' : '已关闭'), :milk_success)
     add_command('物品必定掉落：' + (ResearchMod.drop_always_success? ? '已开启' : '已关闭'), :drop_success)
     add_command('必定入队：' + (ResearchMod.follow_always_success? ? '已开启' : '已关闭'), :follow_success)
+    add_command('阵亡角色获得经验：' + (ResearchMod.dead_battle_exp_enabled? ? '已开启' : '已关闭'), :dead_battle_exp)
     add_command('敌人诱惑事件禁止：' + (ResearchMod.temptation_disabled? ? '已开启' : '已关闭'), :temptation_disabled)
     add_command('敌人诱惑事件无视HP：' + (ResearchMod.temptation_ignore_hp? ? '已开启' : '已关闭'), :temptation_ignore_hp)
     add_command('敌我全员诱惑免疫：' + (ResearchMod.temptation_immunity? ? '已开启' : '已关闭'), :temptation_immunity)
@@ -13427,9 +14086,14 @@ class Window_ResearchModCommand < Window_Command
              '开启后，可在战斗菜单查看双方技能台词、' + 10.chr + '效果反应，并手动组合释放者与目标对白。'
            when :battle_editor
              '开启后，战斗队伍指令增加“战斗修改”，' + 10.chr + '增加如强制赋予或解除敵我成员的诱惑状态等功能'
-           when :force_victory
-             '开启后，战斗队伍指令增加“强制胜利”。' + 10.chr +
-               '选择后直接执行原版胜利结算，包含战斗结束事件、经验、金钱、掉落和入队处理。'
+            when :force_victory
+              '开启后，战斗队伍指令增加“强制胜利”。' + 10.chr +
+                '选择后直接执行原版胜利结算，包含战斗结束事件、经验、金钱、掉落和入队处理。'
+            when :dead_battle_exp
+              '开启后，队伍中的角色即使阵亡，' + 10.chr +
+                '胜利结算时仍获得普通、职业和种族经验。' + 10.chr +
+                '前排和后排角色均可生效。' + 10.chr +
+                '经验倍率仍遵循游戏原本规则。'
            when :synthesize
              '按物品、武器、防具分类浏览全部合成产物。' + 10.chr +
                '每批最多显示200个，可重新输入起始ID并加载上一批或下一批。' + 10.chr +
@@ -18264,7 +18928,8 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:battle_record, method(:toggle_battle_record))
     @command_window.set_handler(:manual_enemy_dialogue, method(:toggle_manual_enemy_dialogue))
     @command_window.set_handler(:battle_editor, method(:toggle_battle_editor))
-    @command_window.set_handler(:force_victory, method(:toggle_force_victory))
+     @command_window.set_handler(:force_victory, method(:toggle_force_victory))
+     @command_window.set_handler(:dead_battle_exp, method(:toggle_dead_battle_exp))
     @command_window.set_handler(:audio_overlay, method(:toggle_audio_overlay))
     @command_window.set_handler(:experimental, method(:open_experimental_menu))
     @command_window.set_handler(:stuck_help, method(:open_stuck_help))
@@ -22532,6 +23197,13 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.activate
   end
 
+  def toggle_dead_battle_exp
+    ResearchMod.toggle_dead_battle_exp
+    @command_window.refresh
+    @command_window.activate
+    @command_window.update_help
+  end
+
   def toggle_graphics_override
     ResearchMod.toggle_graphics_override
     @command_window.refresh
@@ -22944,7 +23616,7 @@ class Window_ChoiceList
     choice = $game_message.choices[index]
     return unless choice
 
-    if choice.to_s == 'やめる'
+    if ResearchMod.persona_dialogue_cancel_text?(choice)
       text = '返回上一级菜单。'
     elsif choice.to_s == '拒绝'
       text = '播放原版好感度不足对话；实际不要求好感度。'
@@ -23845,5 +24517,899 @@ class Scene_ResearchMod
     @event_call_event_window = nil
     @event_call_category_window = nil
     @event_call_help_window = nil
+  end
+end
+
+# Apply priority selection only while the map processes a natural encounter.
+class Game_Player
+  alias research_mod_priority_encounter_encounter encounter
+  alias research_mod_priority_encounter_troop_id make_encounter_troop_id
+
+  def encounter
+    @research_mod_natural_encounter = true
+    research_mod_priority_encounter_encounter
+  ensure
+    @research_mod_natural_encounter = false
+  end
+
+  def make_encounter_troop_id
+    unless @research_mod_natural_encounter &&
+           ResearchMod.priority_encounter_enabled?
+      return research_mod_priority_encounter_troop_id
+    end
+
+    troop_id, source = ResearchMod.priority_encounter_pick
+    unless troop_id
+      troop_id = research_mod_priority_encounter_troop_id
+      ResearchMod.set_priority_encounter_last_result(
+        format('原版随机 -> T%d', troop_id.to_i)
+      )
+      return troop_id
+    end
+
+    ResearchMod.set_priority_encounter_last_result(
+      format('%s -> T%d', source, troop_id)
+    )
+    troop_id
+  end
+end
+
+# Track battle origin and limit reward changes to an automatic victory battle.
+module BattleManager
+  class << self
+    alias research_mod_auto_victory_setup setup
+    def setup(*args)
+      result = research_mod_auto_victory_setup(*args)
+      @research_mod_random_encounter = false
+      @research_mod_custom_battle = false
+      ResearchMod.end_auto_victory_reward
+      result
+    end
+
+    alias research_mod_auto_victory_on_encounter on_encounter
+    def on_encounter
+      result = research_mod_auto_victory_on_encounter
+      @research_mod_random_encounter = true
+      result
+    end
+
+    alias research_mod_auto_victory_battle_end battle_end
+    def battle_end(result)
+      research_mod_auto_victory_battle_end(result)
+    ensure
+      @research_mod_random_encounter = false
+      @research_mod_custom_battle = false
+      ResearchMod.end_auto_victory_reward
+    end
+
+    def research_mod_random_encounter?
+      @research_mod_random_encounter == true
+    end
+
+    def research_mod_custom_battle?
+      @research_mod_custom_battle == true
+    end
+
+    def research_mod_custom_battle=(value)
+      @research_mod_custom_battle = !!value
+    end
+  end
+end
+
+module ResearchMod
+  class << self
+    alias research_mod_auto_victory_setup_battle_request setup_battle_request
+    def setup_battle_request(request)
+      result = research_mod_auto_victory_setup_battle_request(request)
+      BattleManager.research_mod_custom_battle = true if result
+      result
+    end
+  end
+end
+
+class Game_Troop < Game_Unit
+  alias research_mod_auto_victory_exp_total exp_total
+  def exp_total
+    value = research_mod_auto_victory_exp_total
+    ResearchMod.apply_auto_victory_reward_rate(
+      value, ResearchMod.auto_victory_exp_rate
+    )
+  end
+
+  alias research_mod_auto_victory_class_exp_total class_exp_total
+  def class_exp_total
+    value = research_mod_auto_victory_class_exp_total
+    ResearchMod.apply_auto_victory_reward_rate(
+      value, ResearchMod.auto_victory_class_exp_rate
+    )
+  end
+end
+
+class Scene_Battle < Scene_Base
+  alias research_mod_auto_victory_start_party_command_selection \
+    start_party_command_selection
+  def start_party_command_selection
+    unless @research_mod_auto_victory_checked
+      @research_mod_auto_victory_checked = true
+      execute, result = ResearchMod.auto_victory_decision
+      if ResearchMod.auto_victory_enabled?
+        ResearchMod.set_auto_victory_last_result(result)
+      end
+      if execute
+        ResearchMod.begin_auto_victory_reward
+        process_research_mod_force_victory
+        return
+      end
+    end
+
+    research_mod_auto_victory_start_party_command_selection
+  end
+end
+
+class Window_ResearchModAutoVictoryRateInput < Window_NumberInputBase
+  def initialize
+    super()
+  end
+
+  def setup(value)
+    start(ResearchMod::AUTO_VICTORY_RATE_MAX.to_s.size, value.to_i)
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - height) / 2
+    self.z = 500
+  end
+
+  def number
+    [[@number, ResearchMod::AUTO_VICTORY_RATE_MAX].min, 0].max
+  end
+end
+
+class Window_ResearchModAutoVictorySettings < Window_Command
+  def initialize(help_window)
+    @auto_victory_help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @auto_victory_help_window.height
+  end
+
+  def make_command_list
+    add_command('总开关：' + on_off(ResearchMod.auto_victory_enabled?),
+                :toggle_enabled)
+    add_command('Boss战跳过：' +
+                on_off(ResearchMod.auto_victory_skip_boss?), :toggle_boss)
+    add_command('未入队怪物跳过：' +
+                on_off(ResearchMod.auto_victory_skip_unrecruited?),
+                :toggle_unrecruited)
+    range = ResearchMod.auto_victory_random_only? ?
+              '仅随机遇敌' : '全部符合条件战斗'
+    add_command('适用范围：' + range, :toggle_range)
+    add_command(format('经验倍率：%d%%',
+                       ResearchMod.auto_victory_exp_rate), :exp_rate)
+    add_command(format('职业经验倍率：%d%%',
+                       ResearchMod.auto_victory_class_exp_rate),
+                :class_exp_rate)
+    add_command('查看上次判定', :last_result)
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    lines = case current_symbol
+            when :toggle_enabled
+              ['自动胜利的总开关。',
+               '关闭后保留其他设置。']
+            when :toggle_boss
+              ['开启后，敌群中存在 Boss 时跳过。',
+               'Boss 使用特殊类别 10 判断。']
+            when :toggle_unrecruited
+              ['开启后，存在未入队角色时跳过。',
+               '普通不可入队怪物不受影响。']
+            when :toggle_range
+              ['仅随机遇敌：不处理剧情战。',
+               '全部：处理所有符合条件的战斗。',
+               '回想和研究模拟战始终跳过。']
+            when :exp_rate
+              ['设置自动胜利的经验倍率。',
+               '范围 0%～9999%，原值为 100%。',
+               '只影响自动胜利的本场结算。']
+            when :class_exp_rate
+              ['设置自动胜利的职业经验倍率。',
+               '范围 0%～9999%，原值为 100%。',
+               '只影响自动胜利的本场结算。']
+            when :last_result
+              ['最近一次启用后的判定：',
+               ResearchMod.auto_victory_last_result]
+            else
+              ['返回研究修改器。']
+            end
+    help_window.set_text(lines.join(10.chr))
+  end
+
+  def on_off(value)
+    value ? '开' : '关'
+  end
+end
+
+class Window_ResearchModCommand
+  alias research_mod_auto_victory_make_command_list make_command_list
+  def make_command_list
+    research_mod_auto_victory_make_command_list
+    state = ResearchMod.auto_victory_enabled? ? '开' : '关'
+    add_command('战斗自动胜利：' + state, :auto_victory)
+    command = @list.pop
+    force_index = @list.index do |entry|
+      entry[:symbol] == :force_victory
+    end
+    insert_index = force_index ? force_index + 1 : @list.length
+    @list.insert(insert_index, command)
+  end
+
+  alias research_mod_auto_victory_update_help update_help
+  def update_help
+    research_mod_auto_victory_update_help
+    return unless help_window && current_symbol == :auto_victory
+
+    lines = ['设置进入战斗后的自动胜利。',
+             '可跳过 Boss 和未入队怪物。',
+             '也可分别设置两种经验倍率。']
+    help_window.set_text(lines.join(10.chr))
+  end
+end
+
+
+class Scene_ResearchMod
+  alias research_mod_auto_victory_start start
+  def start
+    research_mod_auto_victory_start
+    @command_window.set_handler(
+      :auto_victory, method(:open_auto_victory_settings)
+    )
+  end
+
+  alias research_mod_auto_victory_terminate terminate
+  def terminate
+    dispose_auto_victory_windows
+    research_mod_auto_victory_terminate
+  end
+
+  def open_auto_victory_settings
+    @auto_victory_help_window = Window_Help.new(4)
+    @auto_victory_help_window.y =
+      Graphics.height - @auto_victory_help_window.height
+    @auto_victory_settings_window =
+      Window_ResearchModAutoVictorySettings.new(
+        @auto_victory_help_window
+      )
+    @auto_victory_settings_window.set_handler(
+      :toggle_enabled, method(:toggle_auto_victory_enabled)
+    )
+    @auto_victory_settings_window.set_handler(
+      :toggle_boss, method(:toggle_auto_victory_boss)
+    )
+    @auto_victory_settings_window.set_handler(
+      :toggle_unrecruited, method(:toggle_auto_victory_unrecruited)
+    )
+    @auto_victory_settings_window.set_handler(
+      :toggle_range, method(:toggle_auto_victory_range)
+    )
+    @auto_victory_settings_window.set_handler(
+      :exp_rate, method(:input_auto_victory_exp_rate)
+    )
+    @auto_victory_settings_window.set_handler(
+      :class_exp_rate, method(:input_auto_victory_class_exp_rate)
+    )
+    @auto_victory_settings_window.set_handler(
+      :last_result, method(:keep_auto_victory_settings)
+    )
+    @auto_victory_settings_window.set_handler(
+      :cancel, method(:close_auto_victory_settings)
+    )
+    @auto_victory_settings_window.show
+    @auto_victory_settings_window.activate
+    @command_window.deactivate
+  end
+
+  def toggle_auto_victory_enabled
+    ResearchMod.toggle_auto_victory
+    refresh_auto_victory_settings
+  end
+
+  def toggle_auto_victory_boss
+    ResearchMod.toggle_auto_victory_skip_boss
+    refresh_auto_victory_settings
+  end
+
+  def toggle_auto_victory_unrecruited
+    ResearchMod.toggle_auto_victory_skip_unrecruited
+    refresh_auto_victory_settings
+  end
+
+  def toggle_auto_victory_range
+    ResearchMod.toggle_auto_victory_random_only
+    refresh_auto_victory_settings
+  end
+
+  def keep_auto_victory_settings
+    @auto_victory_settings_window.activate
+    @auto_victory_settings_window.update_help
+  end
+
+  def refresh_auto_victory_settings
+    index = @auto_victory_settings_window.index
+    @auto_victory_settings_window.refresh
+    @auto_victory_settings_window.select(index)
+    @auto_victory_settings_window.activate
+    @auto_victory_settings_window.update_help
+    @command_window.refresh
+  end
+
+  def input_auto_victory_exp_rate
+    open_auto_victory_rate_input(:exp)
+  end
+
+  def input_auto_victory_class_exp_rate
+    open_auto_victory_rate_input(:class_exp)
+  end
+
+  def open_auto_victory_rate_input(kind)
+    @auto_victory_rate_kind = kind
+    value = kind == :exp ? ResearchMod.auto_victory_exp_rate :
+                           ResearchMod.auto_victory_class_exp_rate
+    unless @auto_victory_rate_window
+      @auto_victory_rate_window =
+        Window_ResearchModAutoVictoryRateInput.new
+      @auto_victory_rate_window.set_handler(
+        :ok, method(:apply_auto_victory_rate)
+      )
+      @auto_victory_rate_window.set_handler(
+        :cancel, method(:close_auto_victory_rate_input)
+      )
+    end
+    @auto_victory_rate_window.setup(value)
+    @auto_victory_settings_window.deactivate
+    label = kind == :exp ? '经验' : '职业经验'
+    lines = [format('输入%s倍率。', label),
+             '范围 0%～9999%。',
+             '100% 表示保持原版奖励。']
+    @auto_victory_help_window.set_text(lines.join(10.chr))
+  end
+
+  def apply_auto_victory_rate
+    value = @auto_victory_rate_window.number
+    if @auto_victory_rate_kind == :exp
+      ResearchMod.set_auto_victory_exp_rate(value)
+    else
+      ResearchMod.set_auto_victory_class_exp_rate(value)
+    end
+    close_auto_victory_rate_input
+    refresh_auto_victory_settings
+  end
+
+  def close_auto_victory_rate_input
+    if @auto_victory_rate_window
+      @auto_victory_rate_window.close
+      @auto_victory_rate_window.deactivate
+    end
+    @auto_victory_rate_kind = nil
+    @auto_victory_settings_window.activate
+    @auto_victory_settings_window.update_help
+  end
+
+  def close_auto_victory_settings
+    dispose_auto_victory_windows
+    @command_window.refresh
+    @command_window.activate
+    @command_window.update_help
+  end
+
+  def dispose_auto_victory_windows
+    defer_research_mod_window_dispose(@auto_victory_rate_window)
+    defer_research_mod_window_dispose(@auto_victory_settings_window)
+    defer_research_mod_window_dispose(@auto_victory_help_window)
+    @auto_victory_rate_window = nil
+    @auto_victory_settings_window = nil
+    @auto_victory_help_window = nil
+    @auto_victory_rate_kind = nil
+  end
+end
+
+class Window_ResearchModPriorityEncounterSettings < Window_Command
+  def initialize(help_window)
+    @priority_help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @priority_help_window.height
+  end
+
+  def make_command_list
+    state = ResearchMod.priority_encounter_enabled? ? '开' : '关'
+    add_command('总开关：' + state, :toggle_enabled)
+    mode = ResearchMod.priority_encounter_mode_name
+    add_command('自动规则：' + mode, :mode)
+    boss_state = ResearchMod.priority_encounter_boss_new_only? ? '开' : '关'
+    add_command('Boss仅未遭遇：' + boss_state, :toggle_boss_new)
+    target = ResearchMod.priority_encounter_target_text
+    add_command('手动目标：' + target, :target)
+    count = ResearchMod.priority_encounter_candidates.size
+    add_command(format('查看当前候选（%d）', count), :candidates)
+    add_command('查看上次选择', :last_result)
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    lines = case current_symbol
+            when :toggle_enabled
+              ['自然随机遇敌的优先选择总开关。',
+               '关闭后保留其他设置。']
+            when :mode
+              ['选择没有手动目标时的自动规则。',
+               '自动规则的优先级低于手动目标。',
+               '没有匹配敌群时使用原版随机。']
+            when :toggle_boss_new
+              ['开启：只优先尚未遭遇的 Boss。',
+               '关闭：Boss 可能被连续优先选择。',
+               '只影响自动规则中的 Boss 模式。']
+            when :target
+              priority_target_help_lines
+            when :candidates
+              [ResearchMod.priority_encounter_region_text,
+               '查看当前位置原本允许出现的敌群。',
+               '查看不会触发战斗或改变遇敌计数。']
+            when :last_result
+              ['最近一次自然遇敌的选择：',
+               ResearchMod.priority_encounter_last_result]
+            else
+              ['返回研究修改器。']
+            end
+    help_window.set_text(lines.join(10.chr))
+  end
+
+  def priority_target_help_lines
+    target_id = ResearchMod.priority_encounter_target_id
+    return ['从当前区块可遇到的敌人中选择目标。',
+            '手动目标的优先级高于自动规则。'] if target_id <= 0
+
+    candidates = ResearchMod.priority_encounter_enemy_candidates
+    available = candidates.any? { |enemy| enemy.id == target_id }
+    [format('当前手动目标：%s',
+            ResearchMod.priority_encounter_target_text),
+     available ? '目标可在当前区块遇到。' : '目标不在当前区块，暂不生效。',
+     '无匹配时继续自动规则或原版随机。']
+  end
+end
+
+class Window_ResearchModPriorityModeList < Window_Command
+  def initialize(help_window)
+    @priority_help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    current = ResearchMod.priority_encounter_mode
+    index = @list.index { |entry| entry[:ext] == current }
+    select(index || 0)
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @priority_help_window.height
+  end
+
+  def make_command_list
+    current = ResearchMod.priority_encounter_mode
+    ResearchMod::PRIORITY_ENCOUNTER_MODES.each do |mode|
+      name = ResearchMod.priority_encounter_mode_name(mode)
+      label = mode == current ? name + '（当前）' : name
+      add_command(label, :select, true, mode)
+    end
+    add_command('返回设置', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    lines = case current_ext
+            when :undiscovered
+              ['优先包含未遭遇敌人的敌群。',
+               '进入战斗后会登记为已经遭遇。']
+            when :unrecruited
+              ['优先可入队但尚未入队的敌人。',
+               '普通不可入队怪物不受影响。']
+            when :boss
+              ['优先包含 Boss 的敌群。',
+               '是否限制未遭遇由上一页设置。']
+            when :original
+              ['不使用自动筛选，保持原版随机。',
+               '已经设置的手动目标仍然优先。']
+            else
+              ['返回优先遇敌设置。']
+            end
+    lines << '自动规则的优先级低于手动目标。' if current_ext
+    help_window.set_text(lines.join(10.chr))
+  end
+end
+
+class Window_ResearchModPriorityTroopList < Window_Command
+  def initialize(help_window)
+    @entries = ResearchMod.priority_encounter_candidates
+    @priority_help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @priority_help_window.height
+  end
+
+  def make_command_list
+    if @entries.empty?
+      add_command('当前区块没有有效敌群', :none, false)
+    else
+      @entries.each do |data|
+        troop = data[:troop]
+        display_name = ResearchMod.priority_encounter_troop_name(troop)
+        name = ResearchMod.battle_dialogue_display_text(
+          display_name, 22, 50
+        )
+        add_command(format('T%04d  %s', troop.id, name),
+                    :inspect, true, data)
+      end
+    end
+    add_command('返回设置', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    data = current_ext
+    unless data.is_a?(Hash) && data[:troop]
+      help_window.set_text(
+        [ResearchMod.priority_encounter_region_text,
+         '没有可查看的敌群。'].join(10.chr)
+      )
+      return
+    end
+
+    troop = data[:troop]
+    status = ResearchMod.priority_encounter_rule_status(data)
+    yes_no = proc { |value| value ? '是' : '否' }
+    first_member = ResearchMod.priority_encounter_first_member_text(troop)
+    lines = [format('敌群 T%d　权重 %d', troop.id, data[:weight]),
+             format('未遭遇：%s　未入队：%s　Boss：%s',
+                    yes_no.call(status[:undiscovered]),
+                    yes_no.call(status[:unrecruited]),
+                    yes_no.call(status[:boss])),
+             '首位入队：' + first_member,
+             '当前自动规则：' +
+               ResearchMod.priority_encounter_current_rule_text(data)]
+    help_window.set_text(lines.join(10.chr))
+  end
+
+  def priority_member_text(enemy_ids)
+    values = enemy_ids.map do |enemy_id|
+      enemy = $data_enemies[enemy_id]
+      name = enemy ? enemy.name.to_s : '未知'
+      name = ResearchMod.battle_dialogue_display_text(name, 8, 20)
+      format('E%d %s', enemy_id, name)
+    end
+    text = values.join('／')
+    ResearchMod.battle_dialogue_display_text(text, 38, 80)
+  end
+end
+
+class Window_ResearchModPriorityEnemyList < Window_Command
+  def initialize(help_window)
+    @enemies = ResearchMod.priority_encounter_enemy_candidates
+    @priority_help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    target_id = ResearchMod.priority_encounter_target_id
+    index = @list.index do |entry|
+      enemy = entry[:ext]
+      enemy && enemy.id == target_id
+    end
+    select(index || 0)
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @priority_help_window.height
+  end
+
+  def make_command_list
+    add_command('清除手动目标', :clear)
+    @enemies.each do |enemy|
+      name = ResearchMod.battle_dialogue_display_text(
+        enemy.name.to_s, 24, 55
+      )
+      add_command(format('E%04d  %s', enemy.id, name),
+                  :select, true, enemy)
+    end
+    add_command('返回设置', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    enemy = current_ext
+    unless enemy
+      lines = if current_symbol == :cancel
+                ['返回优先遇敌设置。']
+              else
+                ['清除当前手动目标。',
+                 '之后使用自动规则或原版随机。']
+              end
+      help_window.set_text(lines.join(10.chr))
+      return
+    end
+
+    flags = []
+    unless ResearchMod.priority_encounter_enemy_discovered?(enemy.id)
+      flags << '未遭遇'
+    end
+    if ResearchMod.priority_encounter_enemy_unrecruited?(enemy.id)
+      flags << '未入队'
+    end
+    if ResearchMod.priority_encounter_enemy_boss?(enemy.id)
+      flags << 'Boss'
+    end
+    flags << '普通' if flags.empty?
+    troop_ids = ResearchMod.priority_encounter_candidates.select do |data|
+      data[:enemy_ids].include?(enemy.id)
+    end.map { |data| data[:troop].id }
+    troop_text = troop_ids.first(8).join('、')
+    troop_text += '等' if troop_ids.size > 8
+    name = ResearchMod.battle_dialogue_display_text(
+      enemy.name.to_s, 22, 50
+    )
+    join_text = ResearchMod.priority_encounter_enemy_join_text(enemy.id)
+    lines = [format('敌人 E%d　%s', enemy.id, name),
+             '入队：' + join_text + '　标记：' + flags.join('／'),
+             '所在敌群：' + troop_text,
+             '确定后设为手动目标。']
+    help_window.set_text(lines.join(10.chr))
+  end
+end
+
+class Window_ResearchModCommand
+  alias research_mod_priority_encounter_make_command_list make_command_list
+  def make_command_list
+    research_mod_priority_encounter_make_command_list
+    state = ResearchMod.priority_encounter_enabled? ? '开' : '关'
+    add_command('区块优先遇敌：' + state, :priority_encounter)
+    command = @list.pop
+    auto_index = @list.index do |entry|
+      entry[:symbol] == :auto_victory
+    end
+    insert_index = auto_index || @list.length
+    @list.insert(insert_index, command)
+  end
+
+  alias research_mod_priority_encounter_update_help update_help
+  def update_help
+    research_mod_priority_encounter_update_help
+    return unless help_window && current_symbol == :priority_encounter
+
+    lines = ['设置当前区块的自然随机遇敌优先级。',
+             '手动目标 > 自动规则 > 原版随机。',
+             '不影响剧情战、接触战或模拟战。']
+    help_window.set_text(lines.join(10.chr))
+  end
+end
+
+class Scene_ResearchMod
+  alias research_mod_priority_encounter_start start
+  def start
+    research_mod_priority_encounter_start
+    @command_window.set_handler(
+      :priority_encounter, method(:open_priority_encounter_settings)
+    )
+  end
+
+  alias research_mod_priority_encounter_terminate terminate
+  def terminate
+    dispose_priority_encounter_windows
+    research_mod_priority_encounter_terminate
+  end
+
+  def open_priority_encounter_settings
+    @priority_encounter_help_window = Window_Help.new(4)
+    @priority_encounter_help_window.y =
+      Graphics.height - @priority_encounter_help_window.height
+    @priority_encounter_settings_window =
+      Window_ResearchModPriorityEncounterSettings.new(
+        @priority_encounter_help_window
+      )
+    window = @priority_encounter_settings_window
+    window.set_handler(:toggle_enabled,
+                       method(:toggle_priority_encounter_enabled))
+    window.set_handler(:mode, method(:open_priority_encounter_modes))
+    window.set_handler(:toggle_boss_new,
+                       method(:toggle_priority_encounter_boss_new))
+    window.set_handler(:target, method(:open_priority_encounter_targets))
+    window.set_handler(:candidates,
+                       method(:open_priority_encounter_candidates))
+    window.set_handler(:last_result,
+                       method(:keep_priority_encounter_settings))
+    window.set_handler(:cancel, method(:close_priority_encounter_settings))
+    window.activate
+    @command_window.deactivate
+  end
+
+  def toggle_priority_encounter_enabled
+    ResearchMod.toggle_priority_encounter
+    refresh_priority_encounter_settings
+  end
+
+  def toggle_priority_encounter_boss_new
+    ResearchMod.toggle_priority_encounter_boss_new_only
+    refresh_priority_encounter_settings
+  end
+
+  def keep_priority_encounter_settings
+    @priority_encounter_settings_window.activate
+    @priority_encounter_settings_window.update_help
+  end
+
+  def refresh_priority_encounter_settings
+    window = @priority_encounter_settings_window
+    index = window.index
+    window.refresh
+    window.select(index)
+    window.activate
+    window.update_help
+    @command_window.refresh
+  end
+
+  def open_priority_encounter_modes
+    @priority_encounter_settings_window.hide
+    @priority_encounter_settings_window.deactivate
+    @priority_encounter_mode_window =
+      Window_ResearchModPriorityModeList.new(
+        @priority_encounter_help_window
+      )
+    @priority_encounter_mode_window.set_handler(
+      :select, method(:select_priority_encounter_mode)
+    )
+    @priority_encounter_mode_window.set_handler(
+      :cancel, method(:close_priority_encounter_modes)
+    )
+    @priority_encounter_mode_window.activate
+  end
+
+  def select_priority_encounter_mode
+    mode = @priority_encounter_mode_window.current_ext
+    ResearchMod.set_priority_encounter_mode(mode)
+    close_priority_encounter_modes
+    refresh_priority_encounter_settings
+  end
+
+  def close_priority_encounter_modes
+    defer_research_mod_window_dispose(@priority_encounter_mode_window)
+    @priority_encounter_mode_window = nil
+    restore_priority_encounter_settings
+  end
+
+  def open_priority_encounter_candidates
+    @priority_encounter_settings_window.hide
+    @priority_encounter_settings_window.deactivate
+    @priority_encounter_troop_window =
+      Window_ResearchModPriorityTroopList.new(
+        @priority_encounter_help_window
+      )
+    @priority_encounter_troop_window.set_handler(
+      :inspect, method(:keep_priority_encounter_candidates)
+    )
+    @priority_encounter_troop_window.set_handler(
+      :cancel, method(:close_priority_encounter_candidates)
+    )
+    @priority_encounter_troop_window.activate
+  end
+
+  def keep_priority_encounter_candidates
+    @priority_encounter_troop_window.activate
+    @priority_encounter_troop_window.update_help
+  end
+
+  def close_priority_encounter_candidates
+    defer_research_mod_window_dispose(@priority_encounter_troop_window)
+    @priority_encounter_troop_window = nil
+    restore_priority_encounter_settings
+  end
+
+  def open_priority_encounter_targets
+    @priority_encounter_settings_window.hide
+    @priority_encounter_settings_window.deactivate
+    @priority_encounter_enemy_window =
+      Window_ResearchModPriorityEnemyList.new(
+        @priority_encounter_help_window
+      )
+    @priority_encounter_enemy_window.set_handler(
+      :select, method(:select_priority_encounter_target)
+    )
+    @priority_encounter_enemy_window.set_handler(
+      :clear, method(:clear_priority_encounter_target)
+    )
+    @priority_encounter_enemy_window.set_handler(
+      :cancel, method(:close_priority_encounter_targets)
+    )
+    @priority_encounter_enemy_window.activate
+  end
+
+  def select_priority_encounter_target
+    enemy = @priority_encounter_enemy_window.current_ext
+    ResearchMod.set_priority_encounter_target(enemy ? enemy.id : 0)
+    close_priority_encounter_targets
+    refresh_priority_encounter_settings
+  end
+
+  def clear_priority_encounter_target
+    ResearchMod.set_priority_encounter_target(0)
+    close_priority_encounter_targets
+    refresh_priority_encounter_settings
+  end
+
+  def close_priority_encounter_targets
+    defer_research_mod_window_dispose(@priority_encounter_enemy_window)
+    @priority_encounter_enemy_window = nil
+    restore_priority_encounter_settings
+  end
+
+  def restore_priority_encounter_settings
+    window = @priority_encounter_settings_window
+    return unless window && !window.disposed?
+
+    window.show
+    window.activate
+    window.update_help
+  end
+
+  def close_priority_encounter_settings
+    dispose_priority_encounter_windows
+    @command_window.refresh
+    @command_window.activate
+    @command_window.update_help
+  end
+
+  def dispose_priority_encounter_windows
+    defer_research_mod_window_dispose(@priority_encounter_enemy_window)
+    defer_research_mod_window_dispose(@priority_encounter_troop_window)
+    defer_research_mod_window_dispose(@priority_encounter_mode_window)
+    defer_research_mod_window_dispose(@priority_encounter_settings_window)
+    defer_research_mod_window_dispose(@priority_encounter_help_window)
+    @priority_encounter_enemy_window = nil
+    @priority_encounter_troop_window = nil
+    @priority_encounter_mode_window = nil
+    @priority_encounter_settings_window = nil
+    @priority_encounter_help_window = nil
   end
 end
