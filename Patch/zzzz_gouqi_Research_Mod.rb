@@ -4043,8 +4043,8 @@ end
 
     party = sides[:party]
     enemy = sides[:enemy]
-    return '敌我' if party == :add && enemy == :add
-    return '敌我解除' if party == :remove && enemy == :remove
+    return '我方和敌方' if party == :add && enemy == :add
+    return '我方和敌方解除' if party == :remove && enemy == :remove
 
     labels = []
     labels << (party == :add ? '我方' : '我方解除') if party == :add || party == :remove
@@ -4134,7 +4134,7 @@ end
 
     party = sides[:party]
     enemy = sides[:enemy]
-    return '敌我' if party == :add && enemy == :add
+    return '我方和敌方' if party == :add && enemy == :add
 
     labels = []
     labels << '我方' if party == :add
@@ -14578,10 +14578,10 @@ class Window_ResearchModCommand < Window_Command
     add_command('原版禁止遇敌：' + (ResearchMod.original_encounter_disabled? ? '已开启' : '已关闭'), :original_encounter_disabled)
     add_command('原版禁止队伍排序：' + (ResearchMod.original_formation_disabled? ? '已开启' : '已关闭'), :original_formation_disabled)
     add_command('防止鲁卡强制置顶：' + (ResearchMod.prevent_event_luca_front? ? '已开启' : '已关闭'), :prevent_luca_front)
-    add_command('---------- 实验功能 ----------', :separator, false)
-    add_command('实验功能', :experimental)
     add_command('---------- 剧情与任务 ----------', :separator, false)
     add_command('卡关处理', :stuck_help)
+    add_command('---------- 实验功能 ----------', :separator, false)
+    add_command('实验功能', :experimental)
     add_command('---------- 关于 ----------', :separator, false)
     add_command('关于', :author_info)
     add_command('返回菜单', :cancel)
@@ -15368,15 +15368,18 @@ class Window_ResearchModPreBattleStateAction < Window_Command
     add_command('未设置', :none)
     add_command('赋予我方全体' + name, :party_add)
     add_command('赋予敌方全体' + name, :enemy_add)
-    add_command('赋予敌我全体' + name, :all_add)
+    add_command('赋予我方和敌方全体' + name, :all_add)
     add_command('返回异常状态列表', :cancel)
   end
 
   def update_help
     return unless @help_window
 
-    @help_window.set_text(format('设置%s的战斗前预设；预设默认持续应用。',
-                                 ResearchMod.battle_edit_state_name(@state_id)))
+    @help_window.set_text([
+      format('设置%s的战斗前预设；预设默认持续应用。',
+             ResearchMod.battle_edit_state_name(@state_id)),
+      '选择单独一方时会清除另一方的同类预设；双方同时赋予请使用“我方和敌方”。'
+    ].join(10.chr))
   end
 end
 
@@ -15472,15 +15475,18 @@ class Window_ResearchModPreBattleBuffAction < Window_Command
     add_command('未设置', :none)
     add_command('赋予我方全体' + name, :party_add)
     add_command('赋予敌方全体' + name, :enemy_add)
-    add_command('赋予敌我全体' + name, :all_add)
+    add_command('赋予我方和敌方全体' + name, :all_add)
     add_command('返回Buff列表', :cancel)
   end
 
   def update_help
     return unless @help_window
 
-    @help_window.set_text(format('设置%s的战斗前预设；预设默认持续应用。',
-                                 ResearchMod.battle_edit_state_name(@state_id)))
+    @help_window.set_text([
+      format('设置%s的战斗前预设；预设默认持续应用。',
+             ResearchMod.battle_edit_state_name(@state_id)),
+      '选择单独一方时会清除另一方的同类预设；双方同时赋予请使用“我方和敌方”。'
+    ].join(10.chr))
   end
 end
 
@@ -19964,11 +19970,11 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def set_pre_battle_buff_party_add
-    set_pre_battle_buff_action(:add, nil)
+    set_pre_battle_buff_action(:add, :none)
   end
 
   def set_pre_battle_buff_enemy_add
-    set_pre_battle_buff_action(nil, :add)
+    set_pre_battle_buff_action(:none, :add)
   end
 
   def set_pre_battle_buff_all_add
@@ -20026,7 +20032,7 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def set_pre_battle_party_add
-    set_pre_battle_state_action(:add, nil)
+    set_pre_battle_state_action(:add, :none)
   end
 
   def set_pre_battle_none
@@ -20034,7 +20040,7 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def set_pre_battle_enemy_add
-    set_pre_battle_state_action(nil, :add)
+    set_pre_battle_state_action(:none, :add)
   end
 
   def set_pre_battle_all_add
@@ -20042,11 +20048,11 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def set_pre_battle_party_remove
-    set_pre_battle_state_action(:remove, nil)
+    set_pre_battle_state_action(:remove, :none)
   end
 
   def set_pre_battle_enemy_remove
-    set_pre_battle_state_action(nil, :remove)
+    set_pre_battle_state_action(:none, :remove)
   end
 
   def set_pre_battle_all_remove
@@ -26930,6 +26936,7 @@ module ResearchMod
     :value_editor,
     :database_item,
     :synthesize,
+    :event_call,
     :consumption,
     :free_cooking,
     :experimental,
