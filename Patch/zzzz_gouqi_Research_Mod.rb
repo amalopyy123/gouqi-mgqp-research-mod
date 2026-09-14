@@ -264,6 +264,10 @@ module ResearchMod
   MOONLESS_DANCE_STATE_ID = 503
   WEAPON_SKILL_SPREAD_SKILL_ID = 9786
   WEAPON_SKILL_SPREAD_STATE_ID = 587
+  JOB_SKILL_SPREAD_SKILL_ID = 9788
+  JOB_SKILL_SPREAD_STATE_ID = 589
+  MAGIC_SPREAD_SKILL_ID = 9790
+  MAGIC_SPREAD_STATE_ID = 591
   AUDIO_OVERLAY_KEY = :@research_mod_audio_overlay
   BATTLE_RECORD_MAX_LINES = 5000
   BATTLE_DIALOGUE_PAGE_SIZE = 100
@@ -4113,7 +4117,11 @@ end
       { :name => '月無の舞', :skill_id => MOONLESS_DANCE_SKILL_ID,
         :state_id => MOONLESS_DANCE_STATE_ID },
       { :name => '武技拡散', :skill_id => WEAPON_SKILL_SPREAD_SKILL_ID,
-        :state_id => WEAPON_SKILL_SPREAD_STATE_ID }
+        :state_id => WEAPON_SKILL_SPREAD_STATE_ID },
+      { :name => '職技拡散', :skill_id => JOB_SKILL_SPREAD_SKILL_ID,
+        :state_id => JOB_SKILL_SPREAD_STATE_ID },
+      { :name => '魔法拡散', :skill_id => MAGIC_SPREAD_SKILL_ID,
+        :state_id => MAGIC_SPREAD_STATE_ID }
     ]
   end
 
@@ -7526,6 +7534,498 @@ module Cache
   end
 end
 
+# Automatically recruit all recruitable enemies from the current encounter block.
+module ResearchMod
+  BLOCK_AUTO_RECRUIT_ENABLED_KEY =
+    :@research_mod_block_auto_recruit_enabled
+  BLOCK_AUTO_RECRUIT_PROCESSED_KEY =
+    :@research_mod_block_auto_recruit_processed
+  BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_KEY =
+    :@research_mod_block_auto_recruit_item_quantity
+  BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_MIGRATED_KEY =
+    :@research_mod_block_auto_recruit_item_quantity_migrated
+  BLOCK_AUTO_RECRUIT_AUTO_ITEMS_ENABLED_KEY =
+    :@research_mod_block_auto_recruit_auto_items_enabled
+  BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_DEFAULT = 10
+  BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_MAX = 9999
+
+  def self.block_auto_recruit_enabled?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(
+      BLOCK_AUTO_RECRUIT_ENABLED_KEY
+    ) == true
+  end
+
+  def self.toggle_block_auto_recruit
+    enabled = !block_auto_recruit_enabled?
+    $game_system.instance_variable_set(
+      BLOCK_AUTO_RECRUIT_ENABLED_KEY, enabled
+    ) if $game_system
+    enabled
+  end
+
+  def self.block_auto_recruit_item_quantity
+    default = block_auto_recruit_item_quantity_default
+    return default unless $game_system
+
+    stored = $game_system.instance_variable_get(
+      BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_KEY
+    )
+    if stored.to_i == 6 &&
+       !$game_system.instance_variable_get(
+         BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_MIGRATED_KEY
+       )
+      stored = default
+      $game_system.instance_variable_set(
+        BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_KEY, stored
+      )
+      $game_system.instance_variable_set(
+        BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_MIGRATED_KEY, true
+      )
+    end
+    value = stored.to_i
+    value = default if value < 1
+    [[value, BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_MAX].min, 1].max
+  end
+
+  def self.block_auto_recruit_item_quantity_default
+    configured = config_value(:block_auto_recruit_item_quantity_default)
+    value = configured.to_i
+    value = BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_DEFAULT if value < 1
+    [[value, BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_MAX].min, 1].max
+  rescue
+    BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_DEFAULT
+  end
+
+  def self.set_block_auto_recruit_item_quantity(value)
+    value = [[value.to_i, BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_MAX].min, 1].max
+    $game_system.instance_variable_set(
+      BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_KEY, value
+    ) if $game_system
+    value
+  end
+
+  def self.block_auto_recruit_auto_items_enabled?
+    return true unless $game_system
+
+    value = $game_system.instance_variable_get(
+      BLOCK_AUTO_RECRUIT_AUTO_ITEMS_ENABLED_KEY
+    )
+    value.nil? ? true : value == true
+  end
+
+  def self.toggle_block_auto_recruit_auto_items
+    enabled = !block_auto_recruit_auto_items_enabled?
+    $game_system.instance_variable_set(
+      BLOCK_AUTO_RECRUIT_AUTO_ITEMS_ENABLED_KEY, enabled
+    ) if $game_system
+    enabled
+  end
+
+  def self.block_auto_recruit_processed_keys
+    return [] unless $game_system
+
+    keys = $game_system.instance_variable_get(
+      BLOCK_AUTO_RECRUIT_PROCESSED_KEY
+    )
+    unless keys.is_a?(Array)
+      keys = []
+      $game_system.instance_variable_set(
+        BLOCK_AUTO_RECRUIT_PROCESSED_KEY, keys
+      )
+    end
+    keys
+  end
+
+  def self.block_auto_recruit_block_key
+    return nil unless $game_map && $game_player
+
+    region = if $game_player.respond_to?(:encount_region)
+               $game_player.encount_region
+             else
+               $game_player.region_id
+             end
+    [$game_map.map_id.to_i, region.to_i]
+  rescue
+    nil
+  end
+
+  def self.block_auto_recruit_current_enemies
+    priority_encounter_enemy_candidates
+  rescue
+    []
+  end
+
+  def self.block_auto_recruit_actor_ids
+    ids = []
+    block_auto_recruit_current_enemies.each do |enemy|
+      actor_id = enemy_follower_actor_id(enemy)
+      next unless actor_id && actor_id > 0
+      next if ids.include?(actor_id)
+
+      ids << actor_id
+    end
+    ids
+  rescue
+    []
+  end
+
+  def self.process_block_auto_recruit
+    return [] unless block_auto_recruit_enabled?
+    return [] unless $game_party && $game_map && $game_player
+    return [] if $game_map.interpreter && $game_map.interpreter.running?
+    return [] if $game_message && $game_message.busy?
+
+    block_key = block_auto_recruit_block_key
+    return [] unless block_key
+
+    processed = block_auto_recruit_processed_keys
+    return [] if processed.include?(block_key)
+
+    processed << block_key
+    added = []
+    block_auto_recruit_actor_ids.each do |actor_id|
+      next if $game_party.respond_to?(:follow?) &&
+              $game_party.follow?(actor_id)
+      next unless $game_party.respond_to?(:add_stand_actor)
+
+      $game_party.add_stand_actor(actor_id)
+      actor = $data_actors[actor_id] if defined?($data_actors)
+      added << (actor && !actor.name.to_s.empty? ? actor.name.to_s :
+                format('角色%d', actor_id))
+    end
+    return [] if added.empty?
+
+    item_entries = block_auto_recruit_item_entries
+    gained_kinds = 0
+    gained_total = 0
+    if block_auto_recruit_auto_items_enabled?
+      gained_kinds, gained_total = gain_block_auto_recruit_items(
+        block_auto_recruit_item_quantity, item_entries
+      )
+    end
+
+    {
+      :added => added,
+      :item_entries => item_entries,
+      :item_quantity => block_auto_recruit_item_quantity,
+      :auto_items_enabled => block_auto_recruit_auto_items_enabled?,
+      :gained_kinds => gained_kinds,
+      :gained_total => gained_total
+    }
+  rescue
+    []
+  end
+
+  def self.block_auto_recruit_item_entries
+    indexed = {}
+    block_auto_recruit_current_enemies.each do |enemy|
+      enemy_item_entries(enemy).each do |entry|
+        item = entry && entry[:item]
+        next unless item
+
+        key = [item.class.to_s, item.id.to_i]
+        indexed[key] ||= item
+      end
+    end
+    indexed.values.map { |item| { :item => item } }
+  rescue
+    []
+  end
+
+  def self.gain_block_auto_recruit_items(amount, entries = nil)
+    amount = [[amount.to_i, BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_MAX].min, 1].max
+    gained_kinds = 0
+    gained_total = 0
+    (entries || block_auto_recruit_item_entries).each do |entry|
+      gained = gain_database_item(entry[:item], amount)
+      next unless gained > 0
+
+      gained_kinds += 1
+      gained_total += gained
+    end
+    [gained_kinds, gained_total]
+  rescue
+    [0, 0]
+  end
+end
+
+class Window_ResearchModBlockAutoRecruitMenu < Window_Command
+  def initialize(help_window)
+    @block_auto_recruit_help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @block_auto_recruit_help_window.height
+  end
+
+  def draw_item(index)
+    command = @list[index]
+    unless command && command[:symbol] == :auto_items
+      return super
+    end
+
+    rect = item_rect_for_text(index)
+    marker_width = text_size('▶').width + 4
+    name_width = [rect.width - marker_width, 0].max
+    change_color(normal_color, command_enabled?(index))
+    draw_text(rect.x, rect.y, name_width, rect.height,
+              command[:name].to_s, alignment)
+    change_color(system_color, command_enabled?(index))
+    draw_text(rect.x + name_width, rect.y, marker_width, rect.height,
+              '▶', 2)
+  end
+
+  def make_command_list
+    state = ResearchMod.block_auto_recruit_enabled? ? '已开启' : '已关闭'
+    add_command('区块敌人自动入队总开关：' + state, :toggle)
+    auto_state = ResearchMod.block_auto_recruit_auto_items_enabled? ?
+      '已开启' : '已关闭'
+    add_command('自动入队获取物品：' + auto_state, :auto_items)
+    add_command(
+      format('获取当前区块敌人物品（每种×%d）',
+             ResearchMod.block_auto_recruit_item_quantity),
+      :items
+    )
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    case current_symbol
+    when :toggle
+      help_window.set_text([
+        '进入新的地图/遇敌区块时，自动将该区块全部可入队敌人对应的角色加入候补。',
+        '同一区块只处理一次；已入队角色不会重复加入。'
+      ].join(10.chr))
+    when :auto_items
+      help_window.set_text([
+        '自动入队成功时，自动获取当前区块全部敌人物品。',
+        format('当前设置：每种物品×%d。',
+               ResearchMod.block_auto_recruit_item_quantity),
+        '确认后进入子菜单，可调整总开关和获取数量。'
+      ].join(10.chr))
+    when :items
+      help_window.set_text([
+        '获取当前区块全部敌人的掉落、牛奶、可偷物品、素材和内裤。',
+        format('确认后输入数量；每种物品分别获得该数量（当前默认：%d）。',
+               ResearchMod.block_auto_recruit_item_quantity),
+        '已达到持有上限或不支持直接获得的物品会自动跳过。'
+      ].join(10.chr))
+    else
+      help_window.set_text('返回研究修改器。')
+    end
+  end
+end
+
+class Window_ResearchModBlockAutoRecruitAutoItemsMenu < Window_Command
+  def initialize(help_window)
+    @help_window = help_window
+    super(0, 0)
+    self.help_window = help_window
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @help_window.height
+  end
+
+  def make_command_list
+    state = ResearchMod.block_auto_recruit_auto_items_enabled? ?
+      '已开启' : '已关闭'
+    add_command('自动入队获取物品总开关：' + state, :toggle)
+    add_command(
+      format('每种物品获取数量：%d',
+             ResearchMod.block_auto_recruit_item_quantity),
+      :quantity
+    )
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    case current_symbol
+    when :toggle
+      help_window.set_text(
+        '开启后，自动入队成功时会自动获取当前区块全部敌人物品。'
+      )
+    when :quantity
+      help_window.set_text([
+        '设置自动获取数量；每种物品分别获得该数量。',
+        format('当前值：%d（范围1～%d）。',
+               ResearchMod.block_auto_recruit_item_quantity,
+               ResearchMod::BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_MAX)
+      ].join(10.chr))
+    else
+      help_window.set_text('返回区块敌人自动入队菜单。')
+    end
+  end
+end
+
+class Window_ResearchModBlockAutoRecruitItemQuantity < Window_NumberInputBase
+  attr_reader :maximum
+
+  def setup(initial = 1)
+    @maximum = ResearchMod::BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_MAX
+    start(@maximum.to_s.size, [[initial.to_i, @maximum].min, 1].max)
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - height) / 2
+    self.z = 600
+  end
+
+  def number
+    [[@number, @maximum].min, 1].max
+  end
+
+  def process_digit_change
+    super
+    return unless @number < 1
+
+    @number = 1
+    refresh
+  end
+end
+
+class Window_ResearchModBlockAutoRecruitNotice < Window_Selectable
+  def initialize(text)
+    width = [Graphics.width - 32, 320].max
+    height = [Graphics.height - 32, 240].max
+    x = (Graphics.width - width) / 2
+    y = (Graphics.height - height) / 2
+    super(x, y, width, height)
+    self.z = 1000
+    @notice_text = text.to_s
+    @pages = build_pages
+    @page = 0
+    self.active = true
+    refresh
+    open
+  end
+
+  def item_max
+    1
+  end
+
+  def update_cursor
+    cursor_rect.empty
+  end
+
+  def refresh
+    return if disposed?
+
+    contents.clear
+    footer = if @pages.size > 1
+               format('页面 %d/%d　左右键翻页　确定/取消关闭',
+                      @page + 1, @pages.size)
+             else
+               '确定/取消关闭'
+             end
+    draw_text(0, 0, contents_width, line_height, footer, 2)
+    (@pages[@page] || []).each_with_index do |line, index|
+      draw_text_ex(0, (index + 1) * line_height, line.to_s)
+    end
+  end
+
+  def update
+    super
+    if Input.trigger?(:RIGHT) || Input.trigger?(:R)
+      scroll_page(1)
+    elsif Input.trigger?(:LEFT) || Input.trigger?(:L)
+      scroll_page(-1)
+    elsif Input.trigger?(:C) || Input.trigger?(:B)
+      close
+    end
+  end
+
+  def scroll_page(delta)
+    return false if @pages.size <= 1
+
+    target = [[@page + delta.to_i, 0].max, @pages.size - 1].min
+    return false if target == @page
+
+    @page = target
+    refresh
+    Sound.play_cursor
+    true
+  end
+
+  def closed?
+    !visible || openness <= 0
+  end
+
+  private
+
+  def build_pages
+    lines = @notice_text.split(10.chr, -1)
+    wrapped = []
+    lines.each do |line|
+      if line.to_s.empty?
+        wrapped << ''
+        next
+      end
+      current = ''
+      line.to_s.each_char do |character|
+        candidate = current + character
+        if !current.empty? && text_size(candidate).width > contents_width
+          wrapped << current
+          current = character
+        else
+          current = candidate
+        end
+      end
+      wrapped << current
+    end
+    lines_per_page = [contents_height / line_height - 1, 1].max
+    pages = wrapped.each_slice(lines_per_page).to_a
+    pages.empty? ? [[]] : pages
+  end
+end
+
+module ResearchMod
+  def self.block_auto_recruit_notice_text(result)
+    added = result[:added] || []
+    item_entries = result[:item_entries] || []
+    quantity = result[:item_quantity].to_i
+    lines = ['区块敌人自动入队']
+    lines << format('已加入候补角色：%d名', added.size)
+    added.each { |name| lines << name.to_s }
+    lines << format('当前区块可获取敌人物品：%d种', item_entries.size)
+    lines << format('获取设置：每种物品×%d', quantity > 0 ? quantity : 1)
+    if result[:auto_items_enabled]
+      lines << format('本次自动获取：%d种，共%d个。',
+                      result[:gained_kinds].to_i,
+                      result[:gained_total].to_i)
+    else
+      lines << '自动获取物品：已关闭'
+    end
+    item_names = item_entries.map { |entry| entry[:item].name.to_s }.uniq
+    item_names.each { |name| lines << '・' + name }
+    if result[:auto_items_enabled]
+      lines << '以上物品已在入队时自动尝试获取。'
+    else
+      lines << '自动获取物品已关闭。'
+      lines << '如需获取，请在本菜单选择“获取当前区块敌人物品”。'
+    end
+    lines.join(10.chr)
+  rescue
+    '区块敌人自动入队完成。'.to_s
+  end
+end
+
 # Provide achievement record editing without treating medals as switches.
 module ResearchMod
   ACHIEVEMENT_PAGE_SIZE = 200 unless const_defined?(:ACHIEVEMENT_PAGE_SIZE)
@@ -8108,7 +8608,7 @@ end
 
 module ResearchModAchievementCommandExtension
   def research_mod_add_achievement_command
-    add_command('成就数据', :achievement_data)
+    add_command('成就数据修改', :achievement_data)
     command = @list.pop
     value_index = @list.index { |entry| entry[:symbol] == :value_editor }
     insert_index = value_index ? value_index + 1 : @list.length
@@ -11751,6 +12251,14 @@ class Window_ResearchModBattleEditBuff < Window_ResearchModBattleEditBase
       $data_skills[ResearchMod::WEAPON_SKILL_SPREAD_SKILL_ID] &&
       $data_states[ResearchMod::WEAPON_SKILL_SPREAD_STATE_ID]
     add_command('武技拡散', :weapon_skill_spread, spread_enabled)
+    job_spread_enabled =
+      $data_skills[ResearchMod::JOB_SKILL_SPREAD_SKILL_ID] &&
+      $data_states[ResearchMod::JOB_SKILL_SPREAD_STATE_ID]
+    add_command('職技拡散', :job_skill_spread, job_spread_enabled)
+    magic_spread_enabled =
+      $data_skills[ResearchMod::MAGIC_SPREAD_SKILL_ID] &&
+      $data_states[ResearchMod::MAGIC_SPREAD_STATE_ID]
+    add_command('魔法拡散', :magic_spread, magic_spread_enabled)
     add_command('返回', :cancel)
   end
 
@@ -11762,6 +12270,10 @@ class Window_ResearchModBattleEditBuff < Window_ResearchModBattleEditBase
              '赋予月無の舞的Buff（技能ID 9397，对应状态ID 503）。效果为全体MP、SP消耗为0。'
            when :weapon_skill_spread
              '赋予武技拡散（技能ID 9786，对应状态ID 587）。效果为武技技能全体化。'
+           when :job_skill_spread
+             '赋予職技拡散（技能ID 9788，对应状态ID 589）。效果为職技技能全体化。'
+           when :magic_spread
+             '赋予魔法拡散（技能ID 9790，对应状态ID 591）。效果为魔法技能全体化。'
            else
              '返回战斗修改菜单。'
            end
@@ -12211,6 +12723,14 @@ class Scene_Battle < Scene_Base
     @research_mod_battle_edit_buff_window.set_handler(
       :weapon_skill_spread,
       method(:open_research_mod_battle_edit_weapon_skill_spread_targets)
+    )
+    @research_mod_battle_edit_buff_window.set_handler(
+      :job_skill_spread,
+      method(:open_research_mod_battle_edit_job_skill_spread_targets)
+    )
+    @research_mod_battle_edit_buff_window.set_handler(
+      :magic_spread,
+      method(:open_research_mod_battle_edit_magic_spread_targets)
     )
     @research_mod_battle_edit_buff_window.set_handler(
       :cancel, method(:close_research_mod_battle_edit_buffs)
@@ -13956,6 +14476,20 @@ class Scene_Battle < Scene_Base
     )
   end
 
+  def open_research_mod_battle_edit_job_skill_spread_targets
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_buff_window)
+    open_research_mod_battle_edit_targets(
+      :add, ResearchMod::JOB_SKILL_SPREAD_STATE_ID, '赋予職技拡散'
+    )
+  end
+
+  def open_research_mod_battle_edit_magic_spread_targets
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_buff_window)
+    open_research_mod_battle_edit_targets(
+      :add, ResearchMod::MAGIC_SPREAD_STATE_ID, '赋予魔法拡散'
+    )
+  end
+
   def open_research_mod_battle_edit_state
     state_id = @research_mod_battle_edit_state_window.current_ext
     unless state_id && $data_states && $data_states[state_id]
@@ -14002,7 +14536,9 @@ class Scene_Battle < Scene_Base
   def close_research_mod_battle_edit_targets
     hide_research_mod_battle_edit_window(@research_mod_battle_edit_target_window)
     if [ResearchMod::MOONLESS_DANCE_STATE_ID,
-        ResearchMod::WEAPON_SKILL_SPREAD_STATE_ID].include?(
+        ResearchMod::WEAPON_SKILL_SPREAD_STATE_ID,
+        ResearchMod::JOB_SKILL_SPREAD_STATE_ID,
+        ResearchMod::MAGIC_SPREAD_STATE_ID].include?(
           @research_mod_battle_edit_target_window.state_id
         )
       @research_mod_battle_edit_buff_window.refresh
@@ -26630,6 +27166,290 @@ class Scene_ResearchMod
   end
 end
 
+# Add block auto-recruitment controls after the priority encounter menu.
+class Window_ResearchModCommand
+  alias research_mod_block_auto_recruit_make_command_list make_command_list
+
+  def make_command_list
+    research_mod_block_auto_recruit_make_command_list
+    state = ResearchMod.block_auto_recruit_enabled? ? '已开启' : '已关闭'
+    add_command('区块敌人自动入队：' + state, :block_auto_recruit)
+    command = @list.pop
+    index = @list.index do |entry|
+      entry[:symbol] == :priority_encounter
+    end
+    @list.insert(index ? index + 1 : @list.length, command)
+  end
+
+  alias research_mod_block_auto_recruit_update_help update_help
+
+  def update_help
+    research_mod_block_auto_recruit_update_help
+    return unless help_window && current_symbol == :block_auto_recruit
+
+    help_window.set_text([
+      '进入新区块时，自动加入当前区块全部可入队敌人对应的角色。',
+      '该项目包含总开关和当前区块敌人物品获取功能。'
+    ].join(10.chr))
+  end
+end
+
+class Scene_ResearchMod
+  alias research_mod_block_auto_recruit_start start
+  alias research_mod_block_auto_recruit_notice_update update
+
+  def start
+    research_mod_block_auto_recruit_start
+    @command_window.set_handler(
+      :block_auto_recruit, method(:open_block_auto_recruit)
+    )
+  end
+
+  alias research_mod_block_auto_recruit_terminate terminate
+
+  def terminate
+    dispose_block_auto_recruit_windows
+    research_mod_block_auto_recruit_terminate
+  end
+
+  def open_block_auto_recruit
+    @command_window.deactivate
+    @block_auto_recruit_help_window = Window_Help.new(5)
+    @block_auto_recruit_help_window.y =
+      Graphics.height - @block_auto_recruit_help_window.height
+    @block_auto_recruit_menu_window = Window_ResearchModBlockAutoRecruitMenu.new(
+      @block_auto_recruit_help_window
+    )
+    @block_auto_recruit_menu_window.set_handler(
+      :toggle, method(:toggle_block_auto_recruit)
+    )
+    @block_auto_recruit_menu_window.set_handler(
+      :auto_items, method(:open_block_auto_recruit_auto_items)
+    )
+    @block_auto_recruit_menu_window.set_handler(
+      :items, method(:open_block_auto_recruit_item_quantity)
+    )
+    @block_auto_recruit_menu_window.set_handler(
+      :cancel, method(:close_block_auto_recruit)
+    )
+    @block_auto_recruit_menu_window.activate
+  end
+
+  def open_block_auto_recruit_auto_items
+    @block_auto_recruit_menu_window.deactivate
+    @block_auto_recruit_menu_window.hide
+    @block_auto_recruit_auto_items_window ||=
+      Window_ResearchModBlockAutoRecruitAutoItemsMenu.new(
+        @block_auto_recruit_help_window
+      )
+    @block_auto_recruit_auto_items_window.set_handler(
+      :toggle, method(:toggle_block_auto_recruit_auto_items)
+    )
+    @block_auto_recruit_auto_items_window.set_handler(
+      :quantity, method(:open_block_auto_recruit_auto_item_quantity)
+    )
+    @block_auto_recruit_auto_items_window.set_handler(
+      :cancel, method(:close_block_auto_recruit_auto_items)
+    )
+    @block_auto_recruit_auto_items_window.refresh
+    @block_auto_recruit_auto_items_window.show
+    @block_auto_recruit_auto_items_window.activate
+    @block_auto_recruit_auto_items_window.update_help
+  end
+
+  def toggle_block_auto_recruit_auto_items
+    ResearchMod.toggle_block_auto_recruit_auto_items
+    @block_auto_recruit_auto_items_window.refresh
+    @block_auto_recruit_auto_items_window.activate
+    @block_auto_recruit_auto_items_window.update_help
+    @block_auto_recruit_menu_window.refresh
+  end
+
+  def open_block_auto_recruit_auto_item_quantity
+    @block_auto_recruit_quantity_context = :auto
+    @block_auto_recruit_item_quantity_window ||=
+      Window_ResearchModBlockAutoRecruitItemQuantity.new
+    @block_auto_recruit_item_quantity_window.set_handler(
+      :ok, method(:gain_block_auto_recruit_items)
+    )
+    @block_auto_recruit_item_quantity_window.set_handler(
+      :cancel, method(:close_block_auto_recruit_item_quantity)
+    )
+    @block_auto_recruit_item_quantity_window.setup(
+      ResearchMod.block_auto_recruit_item_quantity
+    )
+    @block_auto_recruit_auto_items_window.deactivate
+    @block_auto_recruit_help_window.set_text([
+      '请输入自动入队时每种物品的获取数量。',
+      format('当前值：%d（范围1～%d）。',
+             ResearchMod.block_auto_recruit_item_quantity,
+             ResearchMod::BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_MAX)
+    ].join(10.chr))
+  end
+
+  def toggle_block_auto_recruit
+    ResearchMod.toggle_block_auto_recruit
+    @block_auto_recruit_menu_window.refresh
+    @block_auto_recruit_menu_window.activate
+    @block_auto_recruit_menu_window.update_help
+    @command_window.refresh
+  end
+
+  def open_block_auto_recruit_item_quantity
+    @block_auto_recruit_quantity_context = :manual
+    entries = ResearchMod.block_auto_recruit_item_entries
+    if entries.empty?
+      @block_auto_recruit_help_window.set_text('当前区块没有可获取的敌人物品。')
+      @block_auto_recruit_menu_window.activate
+      return
+    end
+
+    @block_auto_recruit_item_quantity_window ||=
+      Window_ResearchModBlockAutoRecruitItemQuantity.new
+    @block_auto_recruit_item_quantity_window.set_handler(
+      :ok, method(:gain_block_auto_recruit_items)
+    )
+    @block_auto_recruit_item_quantity_window.set_handler(
+      :cancel, method(:close_block_auto_recruit_item_quantity)
+    )
+    @block_auto_recruit_item_quantity_window.setup(
+      ResearchMod.block_auto_recruit_item_quantity
+    )
+    @block_auto_recruit_menu_window.deactivate
+    @block_auto_recruit_help_window.set_text([
+      format('当前区块共有%d种敌人物品。', entries.size),
+      format('请输入每种物品获取数量（1～%d）。',
+             ResearchMod::BLOCK_AUTO_RECRUIT_ITEM_QUANTITY_MAX),
+      '确认后会对全部物品分别应用该数量。'
+    ].join(10.chr))
+  end
+
+  def gain_block_auto_recruit_items
+    amount = @block_auto_recruit_item_quantity_window.number
+    ResearchMod.set_block_auto_recruit_item_quantity(amount)
+    if @block_auto_recruit_quantity_context == :auto
+      @block_auto_recruit_item_quantity_window.close
+      @block_auto_recruit_item_quantity_window.deactivate
+      @block_auto_recruit_quantity_context = nil
+      @block_auto_recruit_auto_items_window.refresh
+      @block_auto_recruit_auto_items_window.activate
+      @block_auto_recruit_auto_items_window.update_help
+      return
+    end
+    gained_kinds, gained_total = ResearchMod.gain_block_auto_recruit_items(amount)
+    @block_auto_recruit_item_quantity_window.close
+    @block_auto_recruit_item_quantity_window.deactivate
+    @block_auto_recruit_menu_window.refresh
+    @block_auto_recruit_menu_window.deactivate
+    @block_auto_recruit_help_window.set_text(
+      format('获取完成：%d种物品，共%d个。', gained_kinds, gained_total) +
+      10.chr + format('本次设置：每种物品×%d。', amount) +
+      10.chr + '已达到持有上限或不支持直接获得的物品会自动跳过。'
+    )
+    notice_text = [
+      '获取当前区块敌人物品',
+      '',
+      format('本次设置：每种物品×%d', amount),
+      format('成功获得：%d种物品，共%d个。', gained_kinds, gained_total),
+      '',
+      '当前区块的全部敌人物品均已分别尝试获取。',
+      '已达到持有上限或不支持直接获得的物品会自动跳过。'
+    ].join(10.chr)
+    @block_auto_recruit_notice = Window_ResearchModBlockAutoRecruitNotice.new(
+      notice_text
+    )
+  end
+
+  def update
+    research_mod_block_auto_recruit_notice_update
+    notice = @block_auto_recruit_notice
+    return unless notice
+
+    notice.update unless notice.disposed?
+    if notice.disposed? || notice.closed?
+      notice.dispose unless notice.disposed?
+      @block_auto_recruit_notice = nil
+      @block_auto_recruit_menu_window.activate if @block_auto_recruit_menu_window
+      @block_auto_recruit_menu_window.update_help if @block_auto_recruit_menu_window
+    end
+  end
+
+  def close_block_auto_recruit_item_quantity
+    @block_auto_recruit_item_quantity_window.close
+    @block_auto_recruit_item_quantity_window.deactivate
+    if @block_auto_recruit_quantity_context == :auto
+      @block_auto_recruit_quantity_context = nil
+      @block_auto_recruit_auto_items_window.activate
+      @block_auto_recruit_auto_items_window.update_help
+    else
+      @block_auto_recruit_menu_window.activate
+      @block_auto_recruit_menu_window.update_help
+    end
+  end
+
+  def close_block_auto_recruit_auto_items
+    defer_research_mod_window_dispose(@block_auto_recruit_auto_items_window)
+    @block_auto_recruit_auto_items_window = nil
+    @block_auto_recruit_menu_window.show
+    @block_auto_recruit_menu_window.activate
+    @block_auto_recruit_menu_window.update_help
+  end
+
+  def close_block_auto_recruit
+    dispose_block_auto_recruit_windows
+    @command_window.refresh
+    @command_window.activate
+    @command_window.update_help
+  end
+
+  def dispose_block_auto_recruit_windows
+    defer_research_mod_window_dispose(@block_auto_recruit_notice)
+    defer_research_mod_window_dispose(@block_auto_recruit_auto_items_window)
+    defer_research_mod_window_dispose(@block_auto_recruit_item_quantity_window)
+    defer_research_mod_window_dispose(@block_auto_recruit_menu_window)
+    defer_research_mod_window_dispose(@block_auto_recruit_help_window)
+    @block_auto_recruit_item_quantity_window = nil
+    @block_auto_recruit_menu_window = nil
+    @block_auto_recruit_help_window = nil
+    @block_auto_recruit_notice = nil
+    @block_auto_recruit_auto_items_window = nil
+  end
+end
+
+# Process block recruitment once per map/encounter block after the map scene is ready.
+class Scene_Map
+  alias research_mod_block_auto_recruit_update update
+  alias research_mod_block_auto_recruit_terminate terminate
+
+  def update
+    result = research_mod_block_auto_recruit_update
+    notice = @research_mod_block_auto_recruit_notice
+    if notice
+      notice.update unless notice.disposed?
+      if notice.disposed? || notice.closed?
+        notice.dispose unless notice.disposed?
+        @research_mod_block_auto_recruit_notice = nil
+      end
+    elsif !scene_changing?
+      recruitment = ResearchMod.process_block_auto_recruit
+      if recruitment.is_a?(Hash)
+        @research_mod_block_auto_recruit_notice =
+          Window_ResearchModBlockAutoRecruitNotice.new(
+            ResearchMod.block_auto_recruit_notice_text(recruitment)
+          )
+      end
+    end
+    result
+  end
+
+  def terminate
+    notice = @research_mod_block_auto_recruit_notice
+    notice.dispose if notice && !notice.disposed?
+    @research_mod_block_auto_recruit_notice = nil
+    research_mod_block_auto_recruit_terminate
+  end
+end
+
 # Common task helpers for the research modifier.
 module ResearchMod
   VANILLA_SHOP_LEVEL_VARIABLE_ID = 1005
@@ -26912,6 +27732,7 @@ end
 # Mark commands that open another research-modifier menu.
 module ResearchMod
   RESEARCH_MOD_SUBMENU_SYMBOLS = [
+    :achievement_data,
     :harpy_feather_original,
     :harpy_feather_modified,
     :current_map_containers,
@@ -26942,6 +27763,8 @@ module ResearchMod
     :experimental,
     :auto_victory,
     :priority_encounter,
+    :block_auto_recruit,
+    :auto_items,
     :common_tasks,
     :stuck_help
   ].freeze
