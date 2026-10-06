@@ -7,7 +7,7 @@ module ResearchMod
   RECRUIT_ACTOR_ID_MAX = 5000
   LOVE_MAX = 9_999_999
   ACTOR_PARAM_NAMES = ['最大HP', '最大MP', '攻击力', '防御力',
-                       '魔法力', '魔法防御', '敏捷', '幸运']
+                       '魔力', '精神力', '敏捷', '灵巧']
   DATABASE_PAGE_SIZE = 200
   BATTLE_PAGE_SIZE = 200
   CUSTOM_BATTLE_HELP_LINES = 10
@@ -158,7 +158,6 @@ module ResearchMod
   STUCK_NEW_HUMAN_TARGET_VALUE = 17
   SMALL_MEDAL_EXCHANGE_VARIABLE_ID = 55
   LARGE_MEDAL_EXCHANGE_VARIABLE_ID = 59
-  CASINO_COIN_VARIABLE_ID = 110
   SHURA_BONUS_POINT_VARIABLE_ID = 157
   BF_LOSE_REWARD_VARIABLE_ID = 905
   BF_WIN_REWARD_VARIABLE_ID = 907
@@ -268,6 +267,8 @@ module ResearchMod
   JOB_SKILL_SPREAD_STATE_ID = 589
   MAGIC_SPREAD_SKILL_ID = 9790
   MAGIC_SPREAD_STATE_ID = 591
+  KUNOICHI_EXTREME_SKILL_ID = 1808
+  KUNOICHI_EXTREME_STATE_ID = 594
   AUDIO_OVERLAY_KEY = :@research_mod_audio_overlay
   BATTLE_RECORD_MAX_LINES = 5000
   BATTLE_DIALOGUE_PAGE_SIZE = 100
@@ -286,6 +287,7 @@ module ResearchMod
   ]
   TRANSFORMATION_SKILL_IDS = [3126, 3127, 9783, 3128, 3129]
   MANUAL_ENEMY_DIALOGUE_KEY = :@research_mod_manual_enemy_dialogue
+  FORCE_ENEMY_DIALOGUE_KEY = :@research_mod_force_enemy_dialogue
   SPECIAL_ENEMY_DIALOGUE_SKILL_IDS = [*2109..2122, 9433, 9434]
   TALK_EVENT_CATEGORIES = [
     { :key => :information, :source_label => '情報', :label => '信息' },
@@ -339,8 +341,7 @@ module ResearchMod
   def self.value_entries
     [
       { :key => :gold, :label => '金钱', :type => :gold },
-      { :key => :casino_coin, :label => 'カジノコイン（赌场硬币）', :type => :variable,
-        :id => CASINO_COIN_VARIABLE_ID, :maximum => VALUE_VARIABLE_MAX },
+      { :key => :casino_coin, :label => 'カジノコイン（赌场硬币）', :type => :casino_coin },
       { :key => :small_medal, :label => '小さなメダル（小奖章）', :type => :item,
         :id => SMALL_MEDAL_ITEM_ID },
       { :key => :large_medal, :label => '大きなメダル（大奖章）', :type => :item,
@@ -387,6 +388,8 @@ module ResearchMod
     case entry[:type]
     when :gold
       $game_party.gold
+    when :casino_coin
+      $game_party.respond_to?(:coin) ? $game_party.coin.to_i : 0
     when :item
       item = $data_items[entry[:id]]
       item ? $game_party.item_number(item) : 0
@@ -411,6 +414,8 @@ module ResearchMod
     case entry[:type]
     when :gold
       $game_party.max_gold
+    when :casino_coin
+      $game_party.respond_to?(:max_coin) ? $game_party.max_coin : 0
     when :item
       item = $data_items[entry[:id]]
       item ? $game_party.max_item_number(item) : 0
@@ -426,6 +431,10 @@ module ResearchMod
     case entry[:type]
     when :gold
       $game_party.gain_gold(value - $game_party.gold)
+    when :casino_coin
+      return false unless $game_party.respond_to?(:gain_coin)
+
+      $game_party.gain_coin(value - value_current(entry))
     when :item
       item = $data_items[entry[:id]]
       return false unless item
@@ -4121,7 +4130,10 @@ end
       { :name => '職技拡散', :skill_id => JOB_SKILL_SPREAD_SKILL_ID,
         :state_id => JOB_SKILL_SPREAD_STATE_ID },
       { :name => '魔法拡散', :skill_id => MAGIC_SPREAD_SKILL_ID,
-        :state_id => MAGIC_SPREAD_STATE_ID }
+        :state_id => MAGIC_SPREAD_STATE_ID },
+      { :name => "\u5FCD\u6CD5\u30FB\u5973\u5FCD\u7684\u6781\u81F4",
+        :skill_id => KUNOICHI_EXTREME_SKILL_ID,
+        :state_id => KUNOICHI_EXTREME_STATE_ID }
     ]
   end
 
@@ -5018,33 +5030,31 @@ end
     return nil unless event && event.pages && event.pages[0]
 
     list = event.pages[0].list
-    greeting_index = list.index do |command|
-      command.code == 401 &&
-        command.parameters[0].to_s.include?('祝福なき勇者ルカよ')
-    end
-    return nil unless greeting_index
-
-    start_index = greeting_index
-    while start_index > 0 && list[start_index].code != 101
-      start_index -= 1
-    end
-    return nil unless list[start_index].code == 101
-
-    job_change_index = (greeting_index...list.size).find do |index|
+    job_change_index = (0...list.size).find do |index|
       command = list[index]
       command.code == 355 &&
         command.parameters[0].to_s.include?('Scene_JobChange')
     end
     return nil unless job_change_index
 
+    # Locate the message block immediately before the job-change call so the
+    # lookup works with both Japanese and embedded-Chinese event text.
+    start_index = job_change_index - 1
+    while start_index > 0 && list[start_index].code != 101
+      start_index -= 1
+    end
+    return nil unless list[start_index] && list[start_index].code == 101
+
+    dialogue_lines = list[(start_index + 1)...job_change_index].take_while do |command|
+      command.code == 401
+    end
+    return nil if dialogue_lines.empty?
+
     finish_index = job_change_index
     if list[finish_index + 1] && list[finish_index + 1].code == 230
       finish_index += 1
     end
     dialogue_header = list[start_index]
-    dialogue_lines = list[greeting_index...job_change_index].take_while do |command|
-      command.code == 401
-    end
     commands = Marshal.load(Marshal.dump([dialogue_header] + dialogue_lines))
     commands << Marshal.load(Marshal.dump(list[job_change_index]))
     if finish_index > job_change_index
@@ -5258,6 +5268,18 @@ end
   def self.toggle_manual_enemy_dialogue
     enabled = !manual_enemy_dialogue?
     $game_system.instance_variable_set(MANUAL_ENEMY_DIALOGUE_KEY, enabled)
+    enabled
+  end
+
+  def self.force_enemy_dialogue?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(FORCE_ENEMY_DIALOGUE_KEY) == true
+  end
+
+  def self.toggle_force_enemy_dialogue
+    enabled = !force_enemy_dialogue?
+    $game_system.instance_variable_set(FORCE_ENEMY_DIALOGUE_KEY, enabled)
     enabled
   end
 
@@ -9123,6 +9145,7 @@ class Game_Battler
 end
 
 class Game_Enemy
+  alias research_mod_force_enemy_dialogue_make_actions make_actions
   alias research_mod_enemy_item_effect_steal item_effect_steal
   alias research_mod_enemy_item_effect_force_steal item_effect_force_steal
   alias research_mod_enemy_stat_multiplier_mhp mhp
@@ -9133,6 +9156,22 @@ class Game_Enemy
   alias research_mod_enemy_stat_multiplier_mdf mdf
   alias research_mod_enemy_stat_multiplier_agi agi
   alias research_mod_enemy_stat_multiplier_luk luk
+
+  def make_actions
+    research_mod_force_enemy_dialogue_make_actions
+    return unless ResearchMod.force_enemy_dialogue?
+    return if @actions.empty?
+
+    candidates = make_normal_actions.select do |enemy_action|
+      next false unless conditions_met?(enemy_action)
+
+      skill = $data_skills[enemy_action.skill_id]
+      skill && usable?(skill) && exist_skill_word?(skill.id)
+    end
+    return if candidates.empty?
+
+    @actions.first.set_enemy_action(candidates.sample)
+  end
 
   def item_effect_steal(user, item, effect)
     unless user.actor? && ResearchMod.steal_always_success?
@@ -11048,7 +11087,7 @@ class Window_ResearchModBattlePartyStatus < Window_ResearchModBattleStatusBase
     draw_text(rect.x, rect.y + line_height * 4, rect.width, line_height,
               format('强化/弱化：%s', buff_text(actor)), 0)
     draw_text(rect.x, rect.y + line_height * 5, rect.width, line_height,
-              format('攻击 %s　防御 %s　魔法力 %s　敏捷 %s',
+              format('攻击 %s　防御 %s　魔力 %s　敏捷 %s',
                      formatted_number(actor.atk), formatted_number(actor.def),
                      formatted_number(actor.mat), formatted_number(actor.agi)), 0)
   end
@@ -12281,6 +12320,57 @@ class Window_ResearchModBattleEditBuff < Window_ResearchModBattleEditBase
   end
 end
 
+class Window_ResearchModBattleEditBuff
+  alias research_mod_battle_edit_buff_make_command_list_without_kunoichi make_command_list
+  alias research_mod_battle_edit_buff_update_help_without_kunoichi update_help
+
+  def make_command_list
+    moonless_enabled = $data_skills[ResearchMod::MOONLESS_DANCE_SKILL_ID] &&
+                       $data_states[ResearchMod::MOONLESS_DANCE_STATE_ID]
+    add_command('鏈堢劇銇垶', :moonless_dance, moonless_enabled)
+    spread_enabled =
+      $data_skills[ResearchMod::WEAPON_SKILL_SPREAD_SKILL_ID] &&
+      $data_states[ResearchMod::WEAPON_SKILL_SPREAD_STATE_ID]
+    add_command('姝︽妧鎷℃暎', :weapon_skill_spread, spread_enabled)
+    job_spread_enabled =
+      $data_skills[ResearchMod::JOB_SKILL_SPREAD_SKILL_ID] &&
+      $data_states[ResearchMod::JOB_SKILL_SPREAD_STATE_ID]
+    add_command('鑱锋妧鎷℃暎', :job_skill_spread, job_spread_enabled)
+    magic_spread_enabled =
+      $data_skills[ResearchMod::MAGIC_SPREAD_SKILL_ID] &&
+      $data_states[ResearchMod::MAGIC_SPREAD_STATE_ID]
+    add_command('榄旀硶鎷℃暎', :magic_spread, magic_spread_enabled)
+    kunoichi_extreme_enabled =
+      $data_skills[ResearchMod::KUNOICHI_EXTREME_SKILL_ID] &&
+      $data_states[ResearchMod::KUNOICHI_EXTREME_STATE_ID]
+    add_command("\u5FCD\u6CD5\u30FB\u5973\u5FCD\u7684\u6781\u81F4",
+                :kunoichi_extreme, kunoichi_extreme_enabled)
+    add_command('杩斿洖', :cancel)
+  end
+
+  def update_help
+    return unless help_window
+
+    text = case current_symbol
+           when :kunoichi_extreme
+             "\u8D4B\u4E88\u5FCD\u6CD5\u30FB\u5973\u5FCD\u7684\u6781\u81F4\uFF08\u6280\u80FDID 1808\uFF0C\u5BF9\u5E94\u72B6\u6001ID 594\uFF09\u3002\u6548\u679C\u4E3A\u5168\u653B\u51FB\u9644\u52A0\u5FEB\u4E50\u5C5E\u6027\uFF0C\u6301\u7EED 10 \u56DE\u5408\u3002"
+           else
+             return research_mod_battle_edit_buff_update_help_without_kunoichi
+           end
+    help_window.set_text(text.gsub(92.chr + 'n', 10.chr))
+  end
+
+  def make_command_list
+    research_mod_battle_edit_buff_make_command_list_without_kunoichi
+    cancel_command = @list.pop
+    enabled = $data_skills[ResearchMod::KUNOICHI_EXTREME_SKILL_ID] &&
+              $data_states[ResearchMod::KUNOICHI_EXTREME_STATE_ID]
+    add_command("\u5FCD\u6CD5\u30FB\u5973\u5FCD\u7684\u6781\u81F4",
+                :kunoichi_extreme, enabled)
+    @list << cancel_command
+  end
+end
+
 class Window_ResearchModBattleEditTarget < Window_ResearchModBattleEditBase
   attr_reader :action
   attr_reader :state_id
@@ -12731,6 +12821,10 @@ class Scene_Battle < Scene_Base
     @research_mod_battle_edit_buff_window.set_handler(
       :magic_spread,
       method(:open_research_mod_battle_edit_magic_spread_targets)
+    )
+    @research_mod_battle_edit_buff_window.set_handler(
+      :kunoichi_extreme,
+      method(:open_research_mod_battle_edit_kunoichi_extreme_targets)
     )
     @research_mod_battle_edit_buff_window.set_handler(
       :cancel, method(:close_research_mod_battle_edit_buffs)
@@ -14490,6 +14584,14 @@ class Scene_Battle < Scene_Base
     )
   end
 
+  def open_research_mod_battle_edit_kunoichi_extreme_targets
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_buff_window)
+    open_research_mod_battle_edit_targets(
+      :add, ResearchMod::KUNOICHI_EXTREME_STATE_ID,
+      "\u8D4B\u4E88\u5FCD\u6CD5\u30FB\u5973\u5FCD\u7684\u6781\u81F4"
+    )
+  end
+
   def open_research_mod_battle_edit_state
     state_id = @research_mod_battle_edit_state_window.current_ext
     unless state_id && $data_states && $data_states[state_id]
@@ -14538,7 +14640,8 @@ class Scene_Battle < Scene_Base
     if [ResearchMod::MOONLESS_DANCE_STATE_ID,
         ResearchMod::WEAPON_SKILL_SPREAD_STATE_ID,
         ResearchMod::JOB_SKILL_SPREAD_STATE_ID,
-        ResearchMod::MAGIC_SPREAD_STATE_ID].include?(
+        ResearchMod::MAGIC_SPREAD_STATE_ID,
+        ResearchMod::KUNOICHI_EXTREME_STATE_ID].include?(
           @research_mod_battle_edit_target_window.state_id
         )
       @research_mod_battle_edit_buff_window.refresh
@@ -15043,6 +15146,7 @@ class Window_ResearchModCommand < Window_Command
     add_command('显示双方Cut-in：' + (ResearchMod.battle_cutin_view? ? '已开启' : '已关闭'), :battle_cutin_view)
     add_command('显示战斗记录：' + (ResearchMod.battle_record_enabled? ? '已开启' : '已关闭'), :battle_record)
     add_command('显示对白模拟：' + (ResearchMod.manual_enemy_dialogue? ? '已开启' : '已关闭'), :manual_enemy_dialogue)
+    add_command('敌方必定发起对白：' + (ResearchMod.force_enemy_dialogue? ? '已开启' : '已关闭'), :force_enemy_dialogue)
     add_command('显示战斗修改菜单：' + (ResearchMod.battle_editor_enabled? ? '已开启' : '已关闭'), :battle_editor)
     add_command('战斗前修改：' +
                 (ResearchMod.pre_battle_mod_enabled? ? '已开启' : '已关闭'),
@@ -15223,6 +15327,9 @@ class Window_ResearchModCommand < Window_Command
              '开启后，记录本场战斗的技能、' + 10.chr + '伤害、恢复和状态文字，可从战斗菜单查看。'
            when :manual_enemy_dialogue
              '开启后，可在战斗菜单查看双方技能台词、' + 10.chr + '效果反应，并手动组合释放者与目标对白。'
+           when :force_enemy_dialogue
+             '开启后，敌方每回合优先强制使用一个当前可用且带有敌方台词的技能。' + 10.chr +
+               '没有配置台词或不满足技能条件的敌人不会强行生成对白。'
            when :battle_editor
              '开启后，战斗队伍指令增加“战斗修改”，' + 10.chr + '增加如强制赋予或解除敵我成员的诱惑状态等功能'
             when :force_victory
@@ -18889,12 +18996,22 @@ class Window_ResearchModClassLearningHelp < Window_Selectable
   end
 end
 
-class Window_ResearchModClassList < Window_Command
-  alias research_mod_class_list_select select
+class Window_ResearchModClassLearningHelp
+  def update
+    super
+    return unless active
 
-  def initialize(kind, learning_help_window = nil)
+    if Input.trigger?(:RIGHT) || Input.trigger?(:R)
+      scroll_page(1)
+    elsif Input.trigger?(:LEFT) || Input.trigger?(:L)
+      scroll_page(-1)
+    end
+  end
+end
+
+class Window_ResearchModClassList < Window_Command
+  def initialize(kind, _unused_help_window = nil)
     @kind = kind
-    @learning_help_window = learning_help_window
     super(0, 0)
   end
 
@@ -18916,28 +19033,43 @@ class Window_ResearchModClassList < Window_Command
     end
   end
 
-  def select(index)
-    research_mod_class_list_select(index)
-    update_class_learning_help
-  end
-
-  def update_class_learning_help
-    return unless @learning_help_window && !@learning_help_window.disposed?
-
-    entry = $data_classes[current_ext] if current_ext
-    @learning_help_window.set_entry(entry, @kind)
-  end
-
   def update
     super
     update_cursor
-    return unless active
+  end
+end
 
-    if Input.trigger?(:RIGHT) || Input.trigger?(:R)
-      @learning_help_window.scroll_page(1) if @learning_help_window
-    elsif Input.trigger?(:LEFT) || Input.trigger?(:L)
-      @learning_help_window.scroll_page(-1) if @learning_help_window
-    end
+class Window_ResearchModClassAction < Window_Command
+  def initialize
+    super(0, 0)
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - height) / 2
+    self.z = 500
+    hide
+    deactivate
+    unselect
+  end
+
+  def window_width
+    320
+  end
+
+  def visible_line_number
+    3
+  end
+
+  def make_command_list
+    add_command('鍒囨崲', :switch, true)
+    add_command('鏌ョ湅鎯呮姤', :info, true)
+    add_command('杩斿洖', :cancel)
+  end
+end
+
+class Window_ResearchModClassAction
+  def make_command_list
+    add_command("\u5207\u6362", :switch, true)
+    add_command("\u67E5\u770B\u60C5\u62A5", :info, true)
+    add_command("\u8FD4\u56DE", :cancel)
   end
 end
 
@@ -20331,6 +20463,7 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:battle_cutin_view, method(:toggle_battle_cutin_view))
     @command_window.set_handler(:battle_record, method(:toggle_battle_record))
     @command_window.set_handler(:manual_enemy_dialogue, method(:toggle_manual_enemy_dialogue))
+    @command_window.set_handler(:force_enemy_dialogue, method(:toggle_force_enemy_dialogue))
     @command_window.set_handler(:battle_editor, method(:toggle_battle_editor))
     @command_window.set_handler(:pre_battle_mod, method(:open_pre_battle_mod))
      @command_window.set_handler(:force_victory, method(:toggle_force_victory))
@@ -20614,6 +20747,11 @@ class Scene_ResearchMod < Scene_MenuBase
     defer_research_mod_window_dispose(@pre_battle_buff_window)
     defer_research_mod_window_dispose(@pre_battle_state_window)
     defer_research_mod_window_dispose(@pre_battle_mod_window)
+    defer_research_mod_window_dispose(@list_window)
+    defer_research_mod_window_dispose(@class_action_window)
+    defer_research_mod_window_dispose(@class_detail_window)
+    defer_research_mod_window_dispose(@class_level_window)
+    defer_research_mod_window_dispose(@class_level_help_window)
     @pre_battle_action_window = nil
     @pre_battle_buff_action_window = nil
     @pre_battle_buff_window = nil
@@ -20622,6 +20760,11 @@ class Scene_ResearchMod < Scene_MenuBase
     @custom_battle_candidate_window = nil
     @enemy_preview_detail_window = nil
     @enemy_preview_category_window = nil
+    @list_window = nil
+    @class_action_window = nil
+    @class_detail_window = nil
+    @class_level_window = nil
+    @class_level_help_window = nil
     @custom_battle_candidate_dialogue_pending = false
     dispose_research_mod_deferred_windows
     if @research_mod_message_window && !@research_mod_message_window.disposed?
@@ -24926,6 +25069,12 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.activate
   end
 
+  def toggle_force_enemy_dialogue
+    ResearchMod.toggle_force_enemy_dialogue
+    @command_window.refresh
+    @command_window.activate
+  end
+
   def toggle_audio_overlay
     ResearchMod.toggle_audio_overlay
     @command_window.refresh
@@ -24982,6 +25131,7 @@ class Scene_ResearchMod < Scene_MenuBase
       @class_level_window.set_handler(:ok, method(:apply_class_level))
       @class_level_window.set_handler(:cancel, method(:close_class_level_input))
     end
+    @class_level_window.show
     @class_level_window.setup(@actor, @selected_target_id)
     @class_level_help_window = @class_learning_help_window
     kind_name = @selected_kind == :class ? '职业' : '种族'
@@ -25053,6 +25203,149 @@ class Scene_ResearchMod < Scene_MenuBase
     @class_level_window.deactivate
     @class_learning_help_window.show if @class_learning_help_window
     @list_window.activate
+  end
+end
+
+class Scene_ResearchMod
+  def open_class_list(kind)
+    @selected_kind = kind
+    @command_help_window.hide
+    @class_detail_window = Window_ResearchModClassLearningHelp.new(
+      ResearchMod.class_learning_half_width, 0,
+      Graphics.width - ResearchMod.class_learning_half_width, Graphics.height
+    )
+    @class_detail_window.z = 400
+    @class_detail_window.set_text('璇烽€夋嫨涓€涓亴涓氭垨绉嶆棌锛岀‘璁ゅ悗閫夋嫨鎿嶄綔銆?')
+    @class_detail_window.set_text(class_default_detail_text)
+    @class_detail_window.set_handler(:cancel, method(:close_class_detail))
+    @list_window = Window_ResearchModClassList.new(kind)
+    @list_window.set_handler(:select, method(:open_class_action))
+    @list_window.set_handler(:cancel, method(:close_class_list))
+    @class_action_window = Window_ResearchModClassAction.new
+    @class_action_window.set_handler(:switch, method(:open_class_level_input))
+    @class_action_window.set_handler(:info, method(:open_class_detail))
+    @class_action_window.set_handler(:cancel, method(:close_class_action))
+    @command_window.deactivate
+  end
+
+  def open_class_action
+    @selected_target_id = @list_window.current_ext
+    return @list_window.activate unless $data_classes[@selected_target_id]
+
+    @list_window.deactivate
+    @list_window.hide
+    @class_action_window.select(0)
+    @class_action_window.show
+    @class_action_window.activate
+  end
+
+  def open_class_detail
+    entry = $data_classes[@selected_target_id]
+    return @class_action_window.activate unless entry
+
+    @class_action_window.hide
+    @class_action_window.deactivate
+    # Build the expensive learning pages only after the user requests them.
+    @class_detail_window.set_entry(entry, @selected_kind)
+    @class_detail_window.show
+    @class_detail_window.activate
+  end
+
+  def close_class_detail
+    @class_detail_window.hide
+    @class_detail_window.deactivate
+    @class_detail_window.unselect
+    @class_action_window.show
+    @class_action_window.activate
+  end
+
+  def open_class_level_input
+    @class_action_window.hide
+    @class_action_window.deactivate
+    unless @class_level_window
+      @class_level_window = Window_ResearchModClassLevelInput.new
+      @class_level_window.set_handler(:ok, method(:apply_class_level))
+      @class_level_window.set_handler(:cancel, method(:close_class_level_input))
+    end
+    @class_level_window.show
+    @class_level_window.setup(@actor, @selected_target_id)
+    unless @class_level_help_window
+      @class_level_help_window = Window_Help.new(2)
+      @class_level_help_window.y = Graphics.height - @class_level_help_window.height
+      @class_level_help_window.z = 480
+    end
+    kind_name = @selected_kind == :class ? '鑱屼笟' : '绉嶆棌'
+    entry = $data_classes[@selected_target_id]
+    @class_level_help_window.set_text(format(
+      "鐩爣%s锛欼D %d  %s\n璇疯緭鍏ュ垏鎹㈠悗鐨勭瓑绾э紝鑼冨洿 1-%d銆?",
+      kind_name, entry.id, entry.name, @class_level_window.maximum
+    ))
+    @class_level_help_window.set_text(format(
+      "\u76EE\u6807%s\uFF1AID %d  %s\n\u8BF7\u8F93\u5165\u5207\u6362\u540E\u7684\u7B49\u7EA7\uFF0C\u8303\u56F4 1-%d\u3002",
+      (@selected_kind == :class ? "\u804C\u4E1A" : "\u79CD\u65CF"),
+      entry.id, entry.name, @class_level_window.maximum
+    ))
+    @class_level_help_window.show
+    @class_level_help_window.open
+  end
+
+  def apply_class_level
+    ResearchMod.apply_change(@actor, @selected_kind, @selected_target_id,
+                             @class_level_window.number)
+    @command_window.actor = @actor
+    close_class_level_input(true)
+  end
+
+  def close_class_level_input(return_to_list = false)
+    @class_level_window.close
+    @class_level_window.deactivate
+    @class_level_window.hide
+    if @class_level_help_window
+      @class_level_help_window.close
+      @class_level_help_window.hide
+    end
+    if return_to_list
+      @class_action_window.hide
+      @class_action_window.deactivate
+      @class_detail_window.set_text('璇烽€夋嫨涓€涓亴涓氭垨绉嶆棌锛岀‘璁ゅ悗閫夋嫨鎿嶄綔銆?')
+      @class_detail_window.show
+      @class_detail_window.set_text(class_default_detail_text)
+      @list_window.show
+      @list_window.activate
+    else
+      @class_action_window.show
+      @class_action_window.activate
+    end
+  end
+
+  def close_class_action
+    @class_action_window.hide
+    @class_action_window.deactivate
+    @class_action_window.unselect
+    @class_detail_window.set_text(class_default_detail_text)
+    @class_detail_window.show
+    @list_window.show
+    @list_window.activate
+  end
+
+  def close_class_list
+    defer_research_mod_window_dispose(@list_window)
+    defer_research_mod_window_dispose(@class_action_window)
+    defer_research_mod_window_dispose(@class_detail_window)
+    defer_research_mod_window_dispose(@class_level_window)
+    defer_research_mod_window_dispose(@class_level_help_window)
+    @list_window = nil
+    @class_action_window = nil
+    @class_detail_window = nil
+    @class_level_window = nil
+    @class_level_help_window = nil
+    @command_help_window.show
+    @command_window.activate
+    @command_window.update_help
+  end
+
+  def class_default_detail_text
+    "\u8BF7\u9009\u62E9\u4E00\u4E2A\u804C\u4E1A\u6216\u79CD\u65CF\uFF0C\u786E\u8BA4\u540E\u9009\u62E9\u64CD\u4F5C\u3002"
   end
 end
 
@@ -25139,6 +25432,11 @@ class Window_MenuCommand < Window_Command
   def add_original_commands
     research_mod_add_original_commands
     add_command('研究用修改器', :research_mod)
+  end
+
+  # Keep the original formation flag as the only game-state restriction.
+  def formation_enabled
+    $game_party.members.size >= 2 && !$game_system.formation_disabled
   end
 end
 
