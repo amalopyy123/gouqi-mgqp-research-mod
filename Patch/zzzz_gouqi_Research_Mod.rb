@@ -9145,7 +9145,6 @@ class Game_Battler
 end
 
 class Game_Enemy
-  alias research_mod_force_enemy_dialogue_make_actions make_actions
   alias research_mod_enemy_item_effect_steal item_effect_steal
   alias research_mod_enemy_item_effect_force_steal item_effect_force_steal
   alias research_mod_enemy_stat_multiplier_mhp mhp
@@ -9156,22 +9155,6 @@ class Game_Enemy
   alias research_mod_enemy_stat_multiplier_mdf mdf
   alias research_mod_enemy_stat_multiplier_agi agi
   alias research_mod_enemy_stat_multiplier_luk luk
-
-  def make_actions
-    research_mod_force_enemy_dialogue_make_actions
-    return unless ResearchMod.force_enemy_dialogue?
-    return if @actions.empty?
-
-    candidates = make_normal_actions.select do |enemy_action|
-      next false unless conditions_met?(enemy_action)
-
-      skill = $data_skills[enemy_action.skill_id]
-      skill && usable?(skill) && exist_skill_word?(skill.id)
-    end
-    return if candidates.empty?
-
-    @actions.first.set_enemy_action(candidates.sample)
-  end
 
   def item_effect_steal(user, item, effect)
     unless user.actor? && ResearchMod.steal_always_success?
@@ -9835,6 +9818,26 @@ class Game_Interpreter
     @params[3] = 0
     @params[4] = 1
     research_mod_command_122
+  ensure
+    @params = original_params if original_params
+  end
+
+  alias research_mod_force_dialogue_command_122_current command_122
+
+  def command_122
+    common_event_id = research_mod_common_event_id
+    forced_dialogue_roll = $game_party && $game_party.in_battle &&
+                           ResearchMod.force_enemy_dialogue? &&
+                           common_event_id == 6 &&
+                           @params[0, 6] == [13, 13, 0, 2, 1, 20]
+    original_params = nil
+    if forced_dialogue_roll
+      original_params = @params
+      @params = @params.dup
+      @params[4] = 1
+      @params[5] = 1
+    end
+    research_mod_force_dialogue_command_122_current
   ensure
     @params = original_params if original_params
   end
