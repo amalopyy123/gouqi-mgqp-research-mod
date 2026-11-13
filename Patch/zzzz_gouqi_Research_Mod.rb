@@ -30678,7 +30678,7 @@ module ResearchMod
     return data['save_expansion_enabled'] != false if data.key?('save_expansion_enabled')
     # Preserve the disabled state of the previous numeric configuration.
     legacy = data['manual_save_limit']
-    !legacy.is_a?(Integer) || legacy > ORIGINAL_MANUAL_SAVE_LIMIT
+    legacy.is_a?(Integer) && legacy > ORIGINAL_MANUAL_SAVE_LIMIT
   end
 
   def self.manual_save_limit
@@ -30721,7 +30721,7 @@ module ResearchMod
   end
 
   def self.save_notes_enabled?
-    config_data['save_notes_enabled'] != false
+    config_data.fetch('save_notes_enabled', false) != false
   end
 
   def self.set_save_notes_enabled(value)
@@ -30752,7 +30752,10 @@ module ResearchMod
     if key == 'save_expansion_enabled' && data['__field_help'].is_a?(Hash)
       data['__field_help'].delete('manual_save_limit')
       data['__field_help']['save_expansion_enabled'] =
-        '存档扩容开关，默认开启；开启999档，关闭99档。关闭后仍可读取高编号旧档。'
+        '存档扩容开关，默认关闭；开启999档，关闭99档。关闭后仍可读取高编号旧档。'
+    elsif key == 'save_notes_enabled' && data['__field_help'].is_a?(Hash)
+      data['__field_help']['save_notes_enabled'] =
+        '存档备注开关，默认关闭。保存／读取界面按S编辑，最多20字；关闭隐藏备注但保留内容。'
     end
     output = "{\n" + data.map { |key, item|
       '  ' + encode_save_config_json(key.to_s) + ': ' + encode_save_config_json(item)
