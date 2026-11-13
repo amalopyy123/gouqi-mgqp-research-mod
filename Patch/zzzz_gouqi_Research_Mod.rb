@@ -4081,6 +4081,55 @@ end
     enabled
   end
 
+  def self.pre_battle_menu_status(kind)
+    if kind == :enemy_action_plan
+      enabled = pre_battle_enemy_action_enabled?
+      source = $game_system && $game_system.instance_variable_get(:@research_mod_pre_battle_enemy_action_plan)
+      plan = copy_enemy_action_plan(source)
+      configured = (plan[:enabled] && !plan[:skills].empty?) || !enemy_action_times(plan).nil?
+    else
+      enabled = kind == :state ? pre_battle_state_enabled? : pre_battle_buff_enabled?
+      key = kind == :state ? PRE_BATTLE_STATE_PRESETS_KEY : PRE_BATTLE_BUFF_PRESETS_KEY
+      presets = $game_system && $game_system.instance_variable_get(key)
+      presets = {} unless presets.is_a?(Hash)
+      state_ids = kind == :state ? BATTLE_EDIT_STATE_IDS : pre_battle_buff_entries.map { |entry| entry[:state_id] }
+      actions = kind == :state ? [:add, :remove] : [:add]
+      configured = state_ids.any? do |state_id|
+        sides = presets[state_id]
+        $data_states && $data_states[state_id] && sides.is_a?(Hash) &&
+          [:party, :enemy].any? { |side| actions.include?(sides[side]) }
+      end
+    end
+    return :closed unless enabled
+    return :unset unless configured
+    return :paused unless pre_battle_mod_enabled?
+
+    :enabled
+  end
+
+  def self.pre_battle_menu_status_label(kind)
+    { :closed => '已关闭', :unset => '未设置', :paused => '已暂停',
+      :enabled => '已开启' }[pre_battle_menu_status(kind)]
+  end
+
+  def self.pre_battle_menu_status_help(kind)
+    description = { :state => '设置开战时赋予或解除的异常状态。',
+      :buff => '设置开战时自动赋予的Buff。',
+      :enemy_action_plan => '设置开战时应用的敌方技能及行动次数。' }[kind]
+    reason = case pre_battle_menu_status(kind)
+             when :closed
+               kind == :enemy_action_plan ? '自动应用已关闭，预设内容保留。' :
+                 '此项子开关已关闭，预设内容保留。'
+             when :unset
+               '此项子开关已开启，但未配置可应用内容。'
+             when :paused
+               '战斗前修改总开关关闭，预设已暂停。'
+             else
+               '相关开关已开启，下次开战时应用预设。'
+             end
+    [description, reason, '仅说明下次开战设置，不追溯当前战斗。'].join(10.chr)
+  end
+
   def self.pre_battle_state_enabled?
     return true unless $game_system
 
@@ -16032,8 +16081,8 @@ class Window_ResearchModPreBattleMenu < Window_Command
     add_command('战斗前修改总开关：' +
                 (ResearchMod.pre_battle_mod_enabled? ? '已开启' : '已关闭'),
                 :toggle)
-    add_command('异常状态', :state)
-    add_command('Buff', :buff)
+    add_command('异常状态：' + ResearchMod.pre_battle_menu_status_label(:state), :state)
+    add_command('Buff：' + ResearchMod.pre_battle_menu_status_label(:buff), :buff)
     add_command('返回研究修改器', :cancel)
   end
 
@@ -16042,11 +16091,11 @@ class Window_ResearchModPreBattleMenu < Window_Command
 
     text = case current_symbol
            when :toggle
-             '控制战斗前修改功能是否在战斗开始时应用预设。关闭时保留预设内容。'
+             "控制下次开战是否应用各项预设。\n关闭保留内容，子开关也需开启。\n不追溯修改已开始的战斗。"
            when :state
-             '设置战斗开始时自动应用的异常状态预设。'
+             ResearchMod.pre_battle_menu_status_help(:state)
            when :buff
-             '设置战斗开始时自动应用的Buff预设。'
+             ResearchMod.pre_battle_menu_status_help(:buff)
            else
              '返回研究修改器主菜单。'
            end
@@ -29698,7 +29747,7 @@ module ResearchMod
 
   def self.default_enemy_action_plan
     { :enabled => false, :mode => :sequence, :skills => [], :cursor => 0,
-      :action_times => nil }
+      :action_times => nil, :ignore_cooldown => false }
   end
 
   def self.copy_enemy_action_plan(plan)
@@ -29711,6 +29760,7 @@ module ResearchMod
     end
     copy[:enabled] = plan[:enabled] == true && !copy[:skills].empty?
     copy[:mode] = :random if plan[:mode] == :random
+    copy[:ignore_cooldown] = plan[:ignore_cooldown] == true
     count = plan[:action_times]
     if count == :list_length || (count.is_a?(Integer) && count >= 0 && count <= 20)
       copy[:action_times] = count
@@ -29884,11 +29934,42 @@ class Game_Enemy
   end
 
   def research_mod_enemy_plan_skill_usable?(skill)
-    return false unless skill && usable?(skill)
-    return false if @recharge_skills && @recharge_skills[skill.id].to_i > 0
-    return false if $game_party.lonely? && skill.lonely_unused?
+    research_mod_enemy_plan_skill_block_reason(skill).nil?
+  end
 
-    true
+  def research_mod_enemy_plan_skill_block_reason(skill)
+    return '技能不存在' unless skill
+    unless usable?(skill)
+      return '无法行动' unless movable? && !cant_move?
+      return '当前场景不可用' unless occasion_ok?(skill)
+      return '必要状态条件不满足' unless skill_state_ok?(skill)
+      return '武器条件不满足' unless skill_wtype_ok?(skill)
+      return '种族或学习条件不满足' unless skill_race_ok?(skill)
+      unless skill_cost_payable?(skill)
+        values = make_cost_value(skill)
+        return format('MP不足（需要%d／当前%d）', values[:MP], mp) if mp < values.fetch(:MP, 0)
+        return format('SP不足（需要%d／当前%d）', values[:TP], tp) if tp < values.fetch(:TP, 0)
+        if hp <= values.fetch(:HP, 0) && !undead?
+          return format('HP不足（须高于%d／当前%d）', values.fetch(:HP, 0), hp)
+        end
+        return '其他消耗条件不满足'
+      end
+      return '技能被封印' if skill_sealed?(skill.id)
+      return '所属技能类型均被封印' if skill.stypes.all? { |stype_id| skill_type_sealed?(stype_id) }
+      if temptation? && !$game_actors[NWConst::Actor::LUCA].alive?
+        return '誘惑状态下主角无法战斗'
+      end
+      return '没有符合技能条件的目标' unless usable_item_sex_ok?(skill)
+
+      return '原版或其他Mod的使用条件未满足'
+    end
+    if research_mod_enemy_action_plan[:ignore_cooldown] != true &&
+        @recharge_skills && @recharge_skills[skill.id].to_i > 0
+      return format('冷却中（当前计数%d）', @recharge_skills[skill.id])
+    end
+    return '一人旅限制' if $game_party.lonely? && skill.lonely_unused?
+
+    nil
   end
 
   alias research_mod_enemy_plan_on_battle_end on_battle_end
@@ -29967,13 +30048,15 @@ class Scene_Battle
 
   def use_item
     action = @subject.current_action
-    if action && action.research_mod_enemy_plan_action? &&
-       !@subject.research_mod_enemy_plan_skill_usable?(action.item)
-      name = action.item ? ResearchMod.short_item_name(action.item.name) : '无效技能'
-      @log_window.add_text(format('%s：%s无法使用，跳过本次行动。',
-        ResearchMod.short_item_name(@subject.name), name))
-      @subject.action_count += 1 if action.symbol == :count
-      return
+    if action && action.research_mod_enemy_plan_action?
+      reason = @subject.research_mod_enemy_plan_skill_block_reason(action.item)
+      if reason
+        name = action.item ? ResearchMod.short_item_name(action.item.name, 12) : '无效技能'
+        @log_window.add_text(format('%s：%s', ResearchMod.short_item_name(@subject.name, 12), name))
+        @log_window.add_text(reason + '，跳过本次行动。')
+        @subject.action_count += 1 if action.symbol == :count
+        return
+      end
     end
     research_mod_enemy_plan_use_item
   end
@@ -30011,7 +30094,11 @@ end
 
 class Window_ResearchModEnemyActionHelp < Window_ResearchModAllSkillHelp
   def set_enemy_skill(enemy, skill)
-    key = skill ? [enemy.object_id, skill.id, contents_width, contents_height] : nil
+    preset = enemy.is_a?(ResearchMod::EnemyActionPreset)
+    reason = enemy.research_mod_enemy_plan_skill_block_reason(skill) if skill && !preset
+    ignore_cooldown = enemy.research_mod_enemy_action_plan[:ignore_cooldown] == true
+    costs = skill ? [enemy.skill_mp_cost(skill), enemy.skill_tp_cost(skill)] : nil
+    key = skill ? [enemy.object_id, skill.id, contents_width, contents_height, reason, ignore_cooldown, costs] : nil
     return if @skill_key == key
 
     @skill_key = key
@@ -30023,14 +30110,14 @@ class Window_ResearchModEnemyActionHelp < Window_ResearchModAllSkillHelp
       lines = [format('技能 ID：%d', skill.id), '名称：' + skill.name.to_s,
         '所属：' + all_skill_type_label(skill, nil),
         '目标：' + (scopes[skill.scope] || skill.scope.to_s),
-        format('消耗：MP %d／SP %d', enemy.skill_mp_cost(skill), enemy.skill_tp_cost(skill)),
+        format('消耗：MP %d／SP %d', costs[0], costs[1]),
         '其他消耗和特殊条件仍按原版执行。', '说明：']
       lines.concat(skill.description.to_s.gsub(92.chr + 'n', 10.chr).split(/\r?\n/))
-      if enemy.is_a?(ResearchMod::EnemyActionPreset)
+      lines << '指定技能冷却：' + (ignore_cooldown ? '忽略' : '遵循原版')
+      if preset
         lines << '此处显示基础消耗；实际消耗和可用性由战斗中的敌人决定。'
       else
-        lines << (enemy.research_mod_enemy_plan_skill_usable?(skill) ?
-          '当前可用；实际释放时重新检查。' : '当前不可用；轮到时若仍不可用则跳过。')
+        lines << (reason ? '当前不可用：' + reason : '当前可用；实际释放时重新检查。')
       end
       lines << '确认追加一项；可重复添加。'
     end
@@ -30119,13 +30206,15 @@ class Window_ResearchModEnemyActionMenu < Window_Command
                     end
       add_command('每回合行动次数：' + count_label, :action_times)
       add_command('使用方式：' + (plan[:mode] == :sequence ? '按顺序循环' : '列表内随机'), :mode)
+      add_command('指定技能忽略冷却：' + (plan[:ignore_cooldown] == true ? '已开启' : '已关闭'), :ignore_cooldown)
       add_command('添加技能', :add)
       add_command(format('已选技能列表（%d项）', plan[:skills].size), :queue)
       unless preset?
         add_command('保存为战斗前预设', :save_preset)
       end
       add_command(preset? ? '清空预设' : '清空配置', :clear,
-        !plan[:skills].empty? || !plan[:action_times].nil? || (preset? && ResearchMod.pre_battle_enemy_action_enabled?))
+        !plan[:skills].empty? || !plan[:action_times].nil? || plan[:ignore_cooldown] == true ||
+        (preset? && ResearchMod.pre_battle_enemy_action_enabled?))
     when :action_times
       add_command('使用原版次数', :original_times)
       add_command('设置固定次数……', :fixed_times)
@@ -30192,14 +30281,16 @@ class Window_ResearchModEnemyActionMenu < Window_Command
            when :enemies
              '选择本场敌人；同名敌人按位置分别配置。'
            when :settings
-             if preset?
+             if current_symbol == :ignore_cooldown
+               "默认关闭；开启后仅指定的正常行动忽略冷却。\n不清除原版冷却；消耗、封印及状态限制仍有效。\n不影响原版AI、反击或事件强制行动。"
+             elsif preset?
                "长期预设随存档保存；自动应用默认关闭。\n需同时开启战斗前修改总开关；开战时应用到敌方全体。\n各敌人独立从首项开始，本场修改不回写预设。"
              else
                format('%d号位：%s', @enemy.index + 1, ResearchMod.short_item_name(@enemy.name)) +
                  "\n技能指定与次数独立，仅本场有效，当前回合生效。\n保存为战斗前预设需确认，不会自动开启应用。"
              end
            when :action_times
-             "原版／固定0～20次／技能列表长度（空时原版）。\n列表长度随增删更新，重复项计数；超过20项需确认。\n次数与选招独立；无法行动、消耗及冷却限制保留。"
+             "原版／固定0～20次／技能列表长度（空时原版）。\n列表长度随增删更新，重复项计数；超过20项需确认。\n次数与选招独立；忽略冷却需单独开启。"
            when :long_list
              format("列表将有%d项，每回合安排%d次正常行动。\n超过20次可能导致回合过长；不会截断次数。\n确定继续；取消不修改列表或次数设置。", @data[:count], @data[:count])
            when :queue
@@ -30210,9 +30301,9 @@ class Window_ResearchModEnemyActionMenu < Window_Command
              '调整列表顺序；修改后顺序循环从第一项重新开始。'
            when :clear
              preset? ? '清空长期预设并关闭自动应用；取消不修改，不影响已开始的战斗。' :
-               '清空当前敌人的技能列表并恢复原版次数；不修改长期预设，取消不修改。'
+               "清空当前敌人的技能列表，恢复原版次数及冷却规则。\n不修改长期预设；取消不修改。"
            when :save_preset
-             "覆盖长期预设的技能、开关、次数及使用方式，随存档保存。\n不保存顺序进度，不改变自动应用开关；取消不修改。"
+             "覆盖长期预设的技能、开关、次数、方式及冷却选项。\n不保存顺序进度，不改变自动应用开关；取消不修改。"
            else
              "选择分类后浏览技能，确认即可追加。\n全部技能包含内部技能，可能依赖形态或事件。"
            end
@@ -30268,7 +30359,7 @@ module ResearchModEnemyActionEditor
        :confirm_clear, :native, :all, :category, :type, :skill, :reinput,
        :previous, :next, :action_times, :original_times, :fixed_times,
        :list_times, :confirm_long_list, :remove_all, :confirm_remove_all,
-       :auto_apply, :save_preset, :confirm_save_preset].each do |symbol|
+       :auto_apply, :save_preset, :confirm_save_preset, :ignore_cooldown].each do |symbol|
         @research_mod_enemy_plan_menu.set_handler(symbol,
           method(:select_research_mod_enemy_action_command))
       end
@@ -30332,6 +30423,9 @@ module ResearchModEnemyActionEditor
       refresh_research_mod_enemy_action_page
     when :auto_apply
       ResearchMod.toggle_pre_battle_enemy_action
+      refresh_research_mod_enemy_action_page
+    when :ignore_cooldown
+      menu.plan[:ignore_cooldown] = menu.plan[:ignore_cooldown] != true
       refresh_research_mod_enemy_action_page
     when :queue, :add, :clear, :action_times, :remove_all, :save_preset
       mode = { :queue => :queue, :add => :categories, :clear => :clear,
@@ -30524,13 +30618,14 @@ class Window_ResearchModPreBattleMenu
 
   def make_command_list
     research_mod_enemy_plan_pre_battle_commands
-    @list.insert(@list.size - 1, { :name => '敌方行动指定', :symbol => :enemy_action_plan,
+    @list.insert(@list.size - 1, { :name => '敌方行动指定：' + ResearchMod.pre_battle_menu_status_label(:enemy_action_plan),
+      :symbol => :enemy_action_plan,
       :enabled => true, :ext => nil })
   end
 
   def update_help
     if current_symbol == :enemy_action_plan
-      @help_window.set_text('设置每场开战时应用到敌方全体的技能及行动次数预设，随存档保存。') if @help_window
+      @help_window.set_text(ResearchMod.pre_battle_menu_status_help(:enemy_action_plan)) if @help_window
     else
       research_mod_enemy_plan_pre_battle_help
     end
