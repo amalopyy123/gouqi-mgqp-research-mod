@@ -127,6 +127,10 @@ module ResearchMod
     :@research_mod_divine_priest_menu_restore
   CUSTOM_TEXTS_KEY = :@research_mod_custom_texts
   CONFIG_FILE = 'GouqiConfig.json'
+  EXPANDED_MANUAL_SAVE_LIMIT = 999
+  ORIGINAL_MANUAL_SAVE_LIMIT = 99
+  SAVE_NOTE_MAX_CHARS = 20
+  TextInputValue = Struct.new(:name)
   NAME_INPUT_CHARACTERS_FILE = 'GouqiNameInputChars.txt'
   PRESET_NAME_MAX_LENGTH = 16
   SPECIAL_CATEGORY_NAMES = {
@@ -229,6 +233,8 @@ module ResearchMod
   BATTLE_CUTIN_VIEW_KEY = :@research_mod_battle_cutin_view
   BATTLE_RECORD_KEY = :@research_mod_battle_record
   BATTLE_EDITOR_KEY = :@research_mod_battle_editor
+  PARTY_BUFF_DISPEL_PROTECTION_KEY = :@research_mod_party_buff_dispel_protection
+  PARTY_BUFF_DISPEL_REFERENCE_SKILL_ID = 2734
   PRE_BATTLE_MOD_ENABLED_KEY = :@research_mod_pre_battle_mod_enabled
   PRE_BATTLE_STATE_ENABLED_KEY = :@research_mod_pre_battle_state_enabled
   PRE_BATTLE_STATE_PRESETS_KEY = :@research_mod_pre_battle_state_presets
@@ -267,6 +273,8 @@ module ResearchMod
   JOB_SKILL_SPREAD_STATE_ID = 589
   MAGIC_SPREAD_SKILL_ID = 9790
   MAGIC_SPREAD_STATE_ID = 591
+  MONSTER_SKILL_SPREAD_SKILL_ID = 9792
+  MONSTER_SKILL_SPREAD_STATE_ID = 593
   KUNOICHI_EXTREME_SKILL_ID = 1808
   KUNOICHI_EXTREME_STATE_ID = 594
   AUDIO_OVERLAY_KEY = :@research_mod_audio_overlay
@@ -3316,6 +3324,52 @@ end
     enabled
   end
 
+  def self.party_buff_dispel_protection?
+    return false unless $game_system
+
+    $game_system.instance_variable_get(PARTY_BUFF_DISPEL_PROTECTION_KEY) == true
+  end
+
+  def self.toggle_party_buff_dispel_protection
+    enabled = !party_buff_dispel_protection?
+    $game_system.instance_variable_set(PARTY_BUFF_DISPEL_PROTECTION_KEY, enabled)
+    enabled
+  end
+
+  def self.party_buff_dispel_protected?(target, user)
+    user = user.master_observer if user
+    party_buff_dispel_protection? && $game_party && $game_party.in_battle &&
+      target && target.actor? && user && user.enemy?
+  end
+
+  def self.party_buff_dispel_state?(state_id)
+    skill = $data_skills && $data_skills[PARTY_BUFF_DISPEL_REFERENCE_SKILL_ID]
+    return false unless skill
+
+    unless @party_buff_dispel_reference_effects.equal?(skill.effects)
+      @party_buff_dispel_state_ids = {}
+      skill.effects.each do |effect|
+        next unless effect.code == 22 && effect.data_id > 0
+
+        @party_buff_dispel_state_ids[effect.data_id] = true
+      end
+      @party_buff_dispel_reference_effects = skill.effects
+    end
+    @party_buff_dispel_state_ids[state_id] == true
+  end
+
+  def self.with_party_buff_dispel_wall_protection(target, user, item)
+    previous = @party_buff_dispel_wall_item
+    @party_buff_dispel_wall_item = party_buff_dispel_protected?(target, user) ? item : nil
+    yield
+  ensure
+    @party_buff_dispel_wall_item = previous
+  end
+
+  def self.party_buff_dispel_wall_protected?(item)
+    @party_buff_dispel_wall_item.equal?(item)
+  end
+
   def self.graphics_override_enabled?
     return false unless $game_system
 
@@ -4131,6 +4185,8 @@ end
         :state_id => JOB_SKILL_SPREAD_STATE_ID },
       { :name => '魔法拡散', :skill_id => MAGIC_SPREAD_SKILL_ID,
         :state_id => MAGIC_SPREAD_STATE_ID },
+      { :name => '魔物技扩散', :skill_id => MONSTER_SKILL_SPREAD_SKILL_ID,
+        :state_id => MONSTER_SKILL_SPREAD_STATE_ID },
       { :name => "\u5FCD\u6CD5\u30FB\u5973\u5FCD\u7684\u6781\u81F4",
         :skill_id => KUNOICHI_EXTREME_SKILL_ID,
         :state_id => KUNOICHI_EXTREME_STATE_ID }
@@ -9051,6 +9107,16 @@ class Game_Actor
   end
 end
 
+class RPG::UsableItem
+  alias research_mod_party_buff_dispel_erase_defense_wall? erase_defense_wall?
+
+  def erase_defense_wall?
+    return false if ResearchMod.party_buff_dispel_wall_protected?(self)
+
+    research_mod_party_buff_dispel_erase_defense_wall?
+  end
+end
+
 class Game_BattlerBase
   alias research_mod_steal_success steal_success
 
@@ -9060,6 +9126,9 @@ class Game_BattlerBase
 end
 
 class Game_Battler
+  alias research_mod_party_buff_dispel_item_apply item_apply
+  alias research_mod_party_buff_dispel_remove_state item_effect_remove_state
+  alias research_mod_party_buff_dispel_remove_buff item_effect_remove_buff
   alias research_mod_item_effect_steal item_effect_steal
   alias research_mod_item_hit item_hit
   alias research_mod_item_block_rate item_block_rate
@@ -9067,6 +9136,25 @@ class Game_Battler
   alias research_mod_sure_kill_execute_damage execute_damage
   alias research_mod_remove_damage_variance_apply_variance apply_variance
   alias research_mod_remove_damage_variance_make_damage_value make_damage_value
+
+  def item_apply(user, item, *args)
+    ResearchMod.with_party_buff_dispel_wall_protection(self, user, item) do
+      research_mod_party_buff_dispel_item_apply(user, item, *args)
+    end
+  end
+
+  def item_effect_remove_state(user, item, effect)
+    return if ResearchMod.party_buff_dispel_protected?(self, user) &&
+              ResearchMod.party_buff_dispel_state?(effect.data_id)
+
+    research_mod_party_buff_dispel_remove_state(user, item, effect)
+  end
+
+  def item_effect_remove_buff(user, item, effect)
+    return if ResearchMod.party_buff_dispel_protected?(self, user)
+
+    research_mod_party_buff_dispel_remove_buff(user, item, effect)
+  end
 
   def apply_variance(damage, variance)
     return damage if instance_variable_get(:@research_mod_skip_damage_variance)
@@ -11913,6 +12001,7 @@ class Window_ResearchModBattleEditMain < Window_ResearchModBattleEditBase
   def make_command_list
     add_command('异常状态', :state)
     add_command('Buff', :buff)
+    add_command('敌方行动指定', :enemy_action_plan)
     add_command('获取敌人物品', :enemy_items)
     add_command('候补管理', :candidate_manage)
     add_command('返回', :cancel)
@@ -11926,6 +12015,8 @@ class Window_ResearchModBattleEditMain < Window_ResearchModBattleEditBase
              '修改当前战斗中敌我成员的异常状态，不消耗回合。'
            when :buff
              '赋予当前战斗中敌我成员的增益效果，不消耗回合。'
+           when :enemy_action_plan
+             '为本场敌人指定技能或设置每回合固定行动次数，仅本场有效。'
            when :enemy_items
              '选择当前战斗中的敌人，然后查看并获取其掉落和可偷物品。'
            when :candidate_manage
@@ -12301,6 +12392,10 @@ class Window_ResearchModBattleEditBuff < Window_ResearchModBattleEditBase
       $data_skills[ResearchMod::MAGIC_SPREAD_SKILL_ID] &&
       $data_states[ResearchMod::MAGIC_SPREAD_STATE_ID]
     add_command('魔法拡散', :magic_spread, magic_spread_enabled)
+    monster_skill_spread_enabled =
+      $data_skills[ResearchMod::MONSTER_SKILL_SPREAD_SKILL_ID] &&
+      $data_states[ResearchMod::MONSTER_SKILL_SPREAD_STATE_ID]
+    add_command('魔物技扩散', :monster_skill_spread, monster_skill_spread_enabled)
     add_command('返回', :cancel)
   end
 
@@ -12316,6 +12411,8 @@ class Window_ResearchModBattleEditBuff < Window_ResearchModBattleEditBase
              '赋予職技拡散（技能ID 9788，对应状态ID 589）。效果为職技技能全体化。'
            when :magic_spread
              '赋予魔法拡散（技能ID 9790，对应状态ID 591）。效果为魔法技能全体化。'
+           when :monster_skill_spread
+             '赋予魔物技扩散（技能ID 9792，对应状态ID 593）。效果为魔物技全体化。'
            else
              '返回战斗修改菜单。'
            end
@@ -12343,6 +12440,10 @@ class Window_ResearchModBattleEditBuff
       $data_skills[ResearchMod::MAGIC_SPREAD_SKILL_ID] &&
       $data_states[ResearchMod::MAGIC_SPREAD_STATE_ID]
     add_command('榄旀硶鎷℃暎', :magic_spread, magic_spread_enabled)
+    monster_skill_spread_enabled =
+      $data_skills[ResearchMod::MONSTER_SKILL_SPREAD_SKILL_ID] &&
+      $data_states[ResearchMod::MONSTER_SKILL_SPREAD_STATE_ID]
+    add_command('魔物技扩散', :monster_skill_spread, monster_skill_spread_enabled)
     kunoichi_extreme_enabled =
       $data_skills[ResearchMod::KUNOICHI_EXTREME_SKILL_ID] &&
       $data_states[ResearchMod::KUNOICHI_EXTREME_STATE_ID]
@@ -12824,6 +12925,10 @@ class Scene_Battle < Scene_Base
     @research_mod_battle_edit_buff_window.set_handler(
       :magic_spread,
       method(:open_research_mod_battle_edit_magic_spread_targets)
+    )
+    @research_mod_battle_edit_buff_window.set_handler(
+      :monster_skill_spread,
+      method(:open_research_mod_battle_edit_monster_skill_spread_targets)
     )
     @research_mod_battle_edit_buff_window.set_handler(
       :kunoichi_extreme,
@@ -14587,6 +14692,13 @@ class Scene_Battle < Scene_Base
     )
   end
 
+  def open_research_mod_battle_edit_monster_skill_spread_targets
+    hide_research_mod_battle_edit_window(@research_mod_battle_edit_buff_window)
+    open_research_mod_battle_edit_targets(
+      :add, ResearchMod::MONSTER_SKILL_SPREAD_STATE_ID, '赋予魔物技扩散'
+    )
+  end
+
   def open_research_mod_battle_edit_kunoichi_extreme_targets
     hide_research_mod_battle_edit_window(@research_mod_battle_edit_buff_window)
     open_research_mod_battle_edit_targets(
@@ -14644,6 +14756,7 @@ class Scene_Battle < Scene_Base
         ResearchMod::WEAPON_SKILL_SPREAD_STATE_ID,
         ResearchMod::JOB_SKILL_SPREAD_STATE_ID,
         ResearchMod::MAGIC_SPREAD_STATE_ID,
+        ResearchMod::MONSTER_SKILL_SPREAD_STATE_ID,
         ResearchMod::KUNOICHI_EXTREME_STATE_ID].include?(
           @research_mod_battle_edit_target_window.state_id
         )
@@ -15154,6 +15267,9 @@ class Window_ResearchModCommand < Window_Command
     add_command('战斗前修改：' +
                 (ResearchMod.pre_battle_mod_enabled? ? '已开启' : '已关闭'),
                 :pre_battle_mod)
+    add_command('我方强化防驱散：' +
+                (ResearchMod.party_buff_dispel_protection? ? '已开启' : '已关闭'),
+                :party_buff_dispel_protection)
     add_command('战斗强制胜利菜单：' + (ResearchMod.force_victory_enabled? ? '已开启' : '已关闭'), :force_victory)
     add_command('---------- 当前角色修改 ----------', :separator, false)
     add_command('切换当前角色：' + @actor.name, :actor)
@@ -15204,6 +15320,9 @@ class Window_ResearchModCommand < Window_Command
     add_command('允许装备同颜色秘石：' +
                 (ResearchMod.allow_same_color_stones? ? '已开启' : '已关闭'),
                 :allow_same_color_stones)
+    add_command('---------- 存档 ----------', :separator, false)
+    add_command('存档扩容：' + (ResearchMod.save_expansion_enabled? ? '已开启（999）' : '已关闭（99）'), :save_expansion)
+    add_command('存档备注：' + (ResearchMod.save_notes_enabled? ? '已开启' : '已关闭'), :save_notes)
     add_command('---------- 功能开关（修改） ----------', :separator, false)
     add_command('我方攻击必中必杀：' + (ResearchMod.sure_hit_kill? ? '已开启' : '已关闭'), :sure_hit_kill)
     add_command('移除伤害浮动：' + (ResearchMod.remove_damage_variance? ? '已开启' : '已关闭'), :remove_damage_variance)
@@ -15233,6 +15352,10 @@ class Window_ResearchModCommand < Window_Command
     return unless help_window
 
     text = case current_symbol
+           when :save_expansion
+             "开启：999个手动存档；关闭：99个。\n按确定切换，全局配置自动保存。\n关闭后，高编号旧档仍可读取。"
+           when :save_notes
+             "保存／读取界面按S编辑已有存档备注。\n最多20个字符，留空清除；取消不修改。\n关闭仅隐藏备注，已有内容会保留。"
            when :recruit_all
              '此操作会影响全局角色数据，可能影响全局成就判定。' + 10.chr + '建议提前备份存档，再执行。'
            when :set_all_love
@@ -15335,6 +15458,9 @@ class Window_ResearchModCommand < Window_Command
                '没有配置台词或不满足技能条件的敌人不会强行生成对白。'
            when :battle_editor
              '开启后，战斗队伍指令增加“战斗修改”，' + 10.chr + '增加如强制赋予或解除敵我成员的诱惑状态等功能'
+           when :party_buff_dispel_protection
+             '阻止敌方技能解除我方强化状态及清除防御壁。' + 10.chr +
+               '不取消技能伤害，不延长强化持续时间。'
             when :force_victory
               '开启后，战斗队伍指令增加“强制胜利”。' + 10.chr +
                 '选择后直接执行原版胜利结算，包含战斗结束事件、经验、金钱、掉落和入队处理。'
@@ -16664,22 +16790,17 @@ class Scene_ResearchModCooking < Scene_ItemBase
     @item_window.set_handler(:ok, method(:on_item_ok))
     @item_window.set_handler(:cancel, method(:return_scene))
     @item_window.refresh
-    if @research_mod_skill_id
-      skill_index = @item_window.instance_variable_get(:@data).index do |skill|
-        skill.id == @research_mod_skill_id
-      end
-      @item_window.select(skill_index || 0)
-    elsif @item_window.item_max > 0
-      @item_window.select(0)
-    end
+    @research_mod_menu_cursors ||= ResearchMod::MenuCursorMemory.new
+    @research_mod_menu_cursors.restore(@item_window, :cooking, true,
+      { :item_id => @research_mod_skill_id, :index => 0 })
     @item_window.activate
+    @item_window.update_help
   end
 
   def terminate
-    ResearchMod.cooking_menu_no_item_cost = false
-    @item_window.dispose if @item_window && !@item_window.disposed?
-    @help_window.dispose if @help_window && !@help_window.disposed?
     super
+  ensure
+    ResearchMod.cooking_menu_no_item_cost = false
   end
 
   def user
@@ -16696,14 +16817,15 @@ class Scene_ResearchModCooking < Scene_ItemBase
   end
 
   def check_common_event
+    return if scene_changing?
     return unless $game_temp.common_event_reserved?
 
-    # Common events must run on the map; reopen this list when they finish.
+    @research_mod_menu_cursors.capture(@item_window, :cooking)
     $game_temp.instance_variable_set(
       :@research_mod_resume_free_cooking,
-      { :actor_id => @actor.id, :skill_id => item.id }
+      { :scene => self }
     )
-    SceneManager.goto(Scene_Map)
+    SceneManager.call(Scene_Map)
   end
 
   def item_usable?
@@ -16712,18 +16834,40 @@ class Scene_ResearchModCooking < Scene_ItemBase
 end
 
 class Scene_Map < Scene_Base
+  alias research_mod_start_for_free_cooking start
   alias research_mod_update_scene_for_free_cooking update_scene
+
+  def start
+    resume_data = $game_temp.instance_variable_get(:@research_mod_resume_free_cooking)
+    stack = SceneManager.instance_variable_get(:@stack)
+    if resume_data.is_a?(Hash) && resume_data[:scene].is_a?(Scene_ResearchModCooking) &&
+        stack && stack.last.equal?(resume_data[:scene])
+      cooking_stack = stack.dup
+    end
+    research_mod_start_for_free_cooking
+    stack = SceneManager.instance_variable_get(:@stack)
+    if cooking_stack && !scene_changing? && stack && stack.empty?
+      stack.replace(cooking_stack)
+    end
+  end
+
   def update_scene
     research_mod_update_scene_for_free_cooking
     return if scene_changing?
 
     resume_data = $game_temp.instance_variable_get(:@research_mod_resume_free_cooking)
     return unless resume_data
-    return if $game_map.interpreter.running? || $game_message.busy? || $game_player.moving?
+    stack = SceneManager.instance_variable_get(:@stack)
+    unless resume_data.is_a?(Hash) && resume_data[:scene].is_a?(Scene_ResearchModCooking) &&
+        stack && stack.last.equal?(resume_data[:scene])
+      $game_temp.instance_variable_set(:@research_mod_resume_free_cooking, nil)
+      return
+    end
+    return if $game_temp.common_event_reserved? || $game_map.interpreter.running? ||
+      $game_message.busy? || $game_player.moving? || $game_player.transfer?
 
     $game_temp.instance_variable_set(:@research_mod_resume_free_cooking, nil)
-    SceneManager.call(Scene_ResearchModCooking)
-    SceneManager.scene.prepare($game_actors[resume_data[:actor_id]], resume_data[:skill_id])
+    SceneManager.return
   end
 end
 
@@ -18104,6 +18248,24 @@ class Window_ResearchModContainerList < Window_Command
 
   def window_height
     Graphics.height - fitting_height(3)
+  end
+
+  def research_mod_menu_cursor_scope
+    @map_id
+  end
+
+  def research_mod_menu_cursor_key(index)
+    command = @list[index] if index >= 0
+    return unless command
+
+    [command[:symbol], command[:symbol] == :select ? command[:ext].id : nil]
+  end
+
+  def research_mod_menu_cursor_fallback_index(state)
+    return state[:index] unless state[:symbol] == :select
+    return @list.size - 1 if @events.empty?
+
+    [[state[:index], 2].max, @events.size + 1].min
   end
 
   def make_command_list
@@ -20379,6 +20541,7 @@ end
 class Scene_ResearchMod < Scene_MenuBase
   def start
     super
+    clear_disposed_research_mod_windows
     # Keep a message window available so research-mod dialogue can play in menus.
     @research_mod_message_window = Window_Message.new
     if $game_temp.respond_to?(:lib_enemy_index=)
@@ -20393,6 +20556,8 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:actor, method(:select_actor))
     @command_window.set_handler(:level, method(:select_level))
     @command_window.set_handler(:love, method(:select_love))
+    @command_window.set_handler(:save_expansion, method(:toggle_save_expansion))
+    @command_window.set_handler(:save_notes, method(:toggle_save_notes))
     @command_window.set_handler(:actor_params, method(:open_actor_param_editor))
     @command_window.set_handler(:learning, method(:select_learning_skill))
     @command_window.set_handler(:all_skill_learning,
@@ -20469,6 +20634,8 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.set_handler(:force_enemy_dialogue, method(:toggle_force_enemy_dialogue))
     @command_window.set_handler(:battle_editor, method(:toggle_battle_editor))
     @command_window.set_handler(:pre_battle_mod, method(:open_pre_battle_mod))
+    @command_window.set_handler(:party_buff_dispel_protection,
+                                method(:toggle_party_buff_dispel_protection))
      @command_window.set_handler(:force_victory, method(:toggle_force_victory))
      @command_window.set_handler(:dead_battle_exp, method(:toggle_dead_battle_exp))
     @command_window.set_handler(:audio_overlay, method(:toggle_audio_overlay))
@@ -20729,6 +20896,13 @@ class Scene_ResearchMod < Scene_MenuBase
 
   def set_pre_battle_all_remove
     set_pre_battle_state_action(:remove, :remove)
+  end
+
+  def clear_disposed_research_mod_windows
+    instance_variables.each do |variable|
+      window = instance_variable_get(variable)
+      instance_variable_set(variable, nil) if window.is_a?(Window_Base) && window.disposed?
+    end
   end
 
   def terminate
@@ -22269,6 +22443,8 @@ class Scene_ResearchMod < Scene_MenuBase
   end
 
   def open_free_cooking
+    @research_mod_menu_cursors ||= ResearchMod::MenuCursorMemory.new
+    @research_mod_menu_cursors.capture(@command_window, :child_menu)
     SceneManager.call(Scene_ResearchModCooking)
     SceneManager.scene.prepare(@actor)
   end
@@ -22963,12 +23139,16 @@ class Scene_ResearchMod < Scene_MenuBase
   def refresh_current_map_container_list
     return unless @container_list_window
 
+    cursors = ResearchMod::MenuCursorMemory.new
+    cursors.capture(@container_list_window, :containers)
     defer_research_mod_window_dispose(@container_list_window)
     @container_list_window = Window_ResearchModContainerList.new(@container_help_window)
     @container_list_window.set_handler(:select, method(:select_current_map_container))
     @container_list_window.set_handler(:open_all, method(:confirm_open_all_containers))
     @container_list_window.set_handler(:force_all, method(:confirm_force_open_all_containers))
     @container_list_window.set_handler(:cancel, method(:close_current_map_containers))
+    cursors.restore(@container_list_window, :containers, true)
+    @container_list_window.activate
   end
 
   def open_selected_container
@@ -25047,6 +25227,13 @@ class Scene_ResearchMod < Scene_MenuBase
     @command_window.activate
   end
 
+  def toggle_party_buff_dispel_protection
+    ResearchMod.toggle_party_buff_dispel_protection
+    @command_window.refresh
+    @command_window.activate
+    @command_window.update_help
+  end
+
   def toggle_force_victory
     ResearchMod.toggle_force_victory
     @command_window.refresh
@@ -25772,21 +25959,303 @@ class Game_Party
   end
 end
 
+# Party HP editing uses the normal HP setter, including death and revival.
+module ResearchMod
+  def self.party_hp_targets(actor_id = nil)
+    members = $game_party.all_members.compact
+    actor_id ? members.select { |actor| actor.id == actor_id } : members
+  end
+
+  def self.apply_party_hp(actor_id, mode, value = 0)
+    party_hp_targets(actor_id).each do |actor|
+      maximum = actor.mhp
+      target = case mode
+               when :percent
+                 percent = [[value.to_i, 0].max, 100].min
+                 percent == 0 ? 0 : [maximum * percent / 100, 1].max
+               when :full then maximum
+               when :one then 1
+               else value.to_i
+               end
+      # A previous revival must not block reapplying the death state.
+      actor.result.clear
+      actor.hp = [[target, 0].max, maximum].min
+      actor.result.clear
+    end
+  end
+end
+
+class Window_ResearchModPartyHp < Window_Command
+  def initialize(mode, help_window, actor_id = nil)
+    @mode = mode
+    @hp_help_window = help_window
+    @actor_id = actor_id
+    super(0, 0)
+    self.help_window = help_window
+    self.z = 400
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @hp_help_window.height
+  end
+
+  def make_command_list
+    case @mode
+    when :targets
+      members = ResearchMod.party_hp_targets
+      add_command('全体队员（含后备）', :target, !members.empty?, nil)
+      members.each do |actor|
+        add_command(ResearchMod.short_item_name(actor.name, 12),
+                    :target, true, actor.id)
+      end
+      add_command('返回', :cancel)
+    when :actions
+      add_command('设置HP数值', :input, true, :value)
+      add_command('设置HP百分比', :input, true, :percent)
+      add_command('HP设为1', :apply, true, :one)
+      add_command('HP恢复至满值', :apply, true, :full)
+      add_command('返回', :cancel)
+    when :exit
+      add_command('留在调整界面', :cancel)
+      add_command('继续返回', :leave)
+    end
+  end
+
+  def draw_item(index)
+    entry = @list[index]
+    return super unless @mode == :targets && entry[:ext]
+
+    actor = ResearchMod.party_hp_targets(entry[:ext]).first
+    return super unless actor
+
+    rect = item_rect_for_text(index)
+    hp_text = format('HP：%d／%d', actor.hp, actor.mhp)
+    hp_width = [text_size(hp_text).width + 8, rect.width * 2 / 3].min
+    change_color(normal_color)
+    draw_text(rect.x, rect.y, rect.width - hp_width, rect.height,
+              entry[:name])
+    change_color(hp_color(actor))
+    draw_text(rect.x + rect.width - hp_width, rect.y, hp_width,
+              rect.height, hp_text, 2)
+  end
+
+  def update_help
+    return unless help_window
+
+    if @mode == :exit
+      lines = ['当前队伍满足全灭条件。',
+               '返回地图将触发全灭判定。',
+               '可留在此处，将至少一名队员的HP设为正数。',
+               '取消：留在调整界面。']
+    elsif current_symbol == :cancel
+      lines = ['返回上一级。']
+    else
+      actor_id = @mode == :targets ? current_ext : @actor_id
+      actor = actor_id && ResearchMod.party_hp_targets(actor_id).first
+      title = actor ? ResearchMod.short_item_name(actor.name, 16) : '全体队员（含后备）'
+      lines = [title,
+               '0 HP会进入战斗不能，并按原版清除状态和增益。',
+               '设为正数可复活；百分比按各自最大HP计算。',
+               '非零百分比最低1 HP；数值超过上限时取最大HP。']
+    end
+    help_window.set_text(lines.join(10.chr))
+  end
+end
+
+class Window_ResearchModPartyHpInput < Window_NumberInputBase
+  def setup(maximum, value, help_window)
+    @maximum = maximum
+    start([maximum.to_s.size, 1].max, value)
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - help_window.height - height) / 2
+    self.z = 500
+    update_cursor
+  end
+
+  def process_ok
+    if @number > @maximum
+      Sound.play_buzzer
+      return
+    end
+    super
+  end
+end
+
+class Scene_ResearchMod
+  alias research_mod_party_hp_start start
+  def start
+    research_mod_party_hp_start
+    @command_window.set_handler(:party_hp, method(:open_party_hp))
+  end
+
+  alias research_mod_party_hp_terminate terminate
+  def terminate
+    dispose_party_hp_windows
+    research_mod_party_hp_terminate
+  end
+
+  def open_party_hp
+    @command_window.deactivate
+    @party_hp_help_window = Window_Help.new(4)
+    @party_hp_help_window.y = Graphics.height - @party_hp_help_window.height
+    @party_hp_help_window.z = 400
+    @party_hp_target_window = Window_ResearchModPartyHp.new(
+      :targets, @party_hp_help_window
+    )
+    @party_hp_target_window.set_handler(:target, method(:open_party_hp_actions))
+    @party_hp_target_window.set_handler(:cancel, method(:request_close_party_hp))
+  end
+
+  def open_party_hp_actions
+    @party_hp_actor_id = @party_hp_target_window.current_ext
+    @party_hp_target_window.hide.deactivate
+    @party_hp_action_window = Window_ResearchModPartyHp.new(
+      :actions, @party_hp_help_window, @party_hp_actor_id
+    )
+    @party_hp_action_window.set_handler(:input, method(:open_party_hp_input))
+    @party_hp_action_window.set_handler(:apply, method(:apply_party_hp_shortcut))
+    @party_hp_action_window.set_handler(:cancel, method(:close_party_hp_actions))
+  end
+
+  def open_party_hp_input
+    @party_hp_mode = @party_hp_action_window.current_ext
+    targets = ResearchMod.party_hp_targets(@party_hp_actor_id)
+    return close_party_hp_actions if targets.empty?
+
+    percent = @party_hp_mode == :percent
+    maximum = percent ? 100 : targets.map { |actor| actor.mhp }.max
+    initial = if !percent
+                0
+              elsif @party_hp_actor_id
+                actor = targets.first
+                actor.hp * 100 / [actor.mhp, 1].max
+              else
+                100
+              end
+    @party_hp_action_window.hide.deactivate
+    @party_hp_input_window = Window_ResearchModPartyHpInput.new
+    @party_hp_input_window.setup(maximum, initial, @party_hp_help_window)
+    @party_hp_input_window.set_handler(:ok, method(:apply_party_hp_input))
+    @party_hp_input_window.set_handler(:cancel, method(:cancel_party_hp_input))
+    title = @party_hp_actor_id ?
+      ResearchMod.short_item_name(targets.first.name, 16) : '全体队员（含后备）'
+    @party_hp_help_window.set_text([
+      title + (percent ? '：设置HP百分比' : '：设置最终HP'),
+      format('请输入0～%d%s；超过范围时无法确认。', maximum, percent ? '%' : ''),
+      percent ? '0%为0 HP；非零百分比最低1 HP。' : '超过角色最大HP时，按该角色上限设置。',
+      '左右选择数位，上下修改；确定应用，取消返回。'
+    ].join(10.chr))
+  end
+
+  def apply_party_hp_input
+    ResearchMod.apply_party_hp(@party_hp_actor_id, @party_hp_mode,
+                               @party_hp_input_window.number)
+    finish_party_hp_change
+  end
+
+  def apply_party_hp_shortcut
+    ResearchMod.apply_party_hp(@party_hp_actor_id,
+                               @party_hp_action_window.current_ext)
+    finish_party_hp_change
+  end
+
+  def finish_party_hp_change
+    defer_research_mod_window_dispose(@party_hp_input_window)
+    @party_hp_input_window = nil
+    close_party_hp_actions
+    @party_hp_help_window.set_text([
+      'HP调整完成，可继续选择队员。',
+      '0 HP会进入战斗不能，并按原版清除状态和增益。',
+      '设为正数可复活；全员归零后请留意退出提示。'
+    ].join(10.chr))
+  end
+
+  def cancel_party_hp_input
+    defer_research_mod_window_dispose(@party_hp_input_window)
+    @party_hp_input_window = nil
+    @party_hp_action_window.show.activate
+    @party_hp_action_window.update_help
+  end
+
+  def close_party_hp_actions
+    defer_research_mod_window_dispose(@party_hp_action_window)
+    @party_hp_action_window = nil
+    index = @party_hp_target_window.index
+    @party_hp_target_window.refresh
+    @party_hp_target_window.select(index)
+    @party_hp_target_window.show.activate
+    @party_hp_target_window.update_help
+  end
+
+  def request_close_party_hp
+    return close_party_hp unless $game_party.all_dead?
+
+    @party_hp_target_window.hide.deactivate
+    @party_hp_exit_window = Window_ResearchModPartyHp.new(
+      :exit, @party_hp_help_window
+    )
+    @party_hp_exit_window.set_handler(:cancel, method(:cancel_party_hp_exit))
+    @party_hp_exit_window.set_handler(:leave, method(:close_party_hp))
+  end
+
+  def cancel_party_hp_exit
+    defer_research_mod_window_dispose(@party_hp_exit_window)
+    @party_hp_exit_window = nil
+    @party_hp_target_window.show.activate
+    @party_hp_target_window.update_help
+  end
+
+  def close_party_hp
+    dispose_party_hp_windows
+    @command_window.refresh
+    @command_window.activate
+    @command_window.update_help
+  end
+
+  def dispose_party_hp_windows
+    defer_research_mod_window_dispose(@party_hp_input_window)
+    defer_research_mod_window_dispose(@party_hp_action_window)
+    defer_research_mod_window_dispose(@party_hp_target_window)
+    defer_research_mod_window_dispose(@party_hp_exit_window)
+    defer_research_mod_window_dispose(@party_hp_help_window)
+    @party_hp_input_window = nil
+    @party_hp_action_window = nil
+    @party_hp_target_window = nil
+    @party_hp_exit_window = nil
+    @party_hp_help_window = nil
+  end
+end
+
 # Add a direct entry point to the original maid common event.
 class Window_ResearchModCommand
   alias research_mod_maid_make_command_list make_command_list
   def make_command_list
     research_mod_maid_make_command_list
+    add_command('队伍HP调整', :party_hp)
+    hp_command = @list.pop
     add_command('女仆对话', :maid_dialogue)
     maid_command = @list.pop
     map_index = @list.index { |entry| entry[:symbol] == :map_follower_count }
     insert_index = map_index ? map_index + 1 : @list.length
-    @list.insert(insert_index, maid_command)
+    @list.insert(insert_index, hp_command, maid_command)
   end
 
   alias research_mod_maid_update_help update_help
   def update_help
     research_mod_maid_update_help
+    if help_window && current_symbol == :party_hp
+      help_window.set_text([
+        '调整当前队伍任意角色或全体队员的HP，包含后备。',
+        '支持数值、百分比、设为1和满HP；允许设为0。',
+        '0 HP会进入战斗不能，并按原版清除状态和增益。',
+        '全员归零后，返回地图通常会触发全灭判定。'
+      ].join(10.chr))
+    end
     return unless help_window && current_symbol == :maid_dialogue
 
     help_window.set_text(
@@ -26175,17 +26644,26 @@ class Window_ResearchModNameEdit < Window_NameEdit
   # Draw the editable text without the actor face shown by the original window.
   def refresh
     contents.clear
-    display_name = @name + (@index < @max_char ? '_' : '')
+    display_name = visible_input_text
     width = text_size(display_name).width
     x = [(contents.width - width) / 2, 0].max
     draw_text(x, 0, width, line_height, display_name)
   end
 
   def update_cursor
-    name_width = text_size(@name).width
-    display_width = text_size(@name + (@index < @max_char ? '_' : '')).width
+    display_name = visible_input_text
+    display_width = text_size(display_name).width
+    name_width = text_size(@index < @max_char ? display_name[0...-1] : display_name).width
     x = [(contents.width - display_width) / 2 + name_width, 0].max
-    cursor_rect.set(x, 0, 24, line_height)
+    cursor_rect.set([x, contents.width - 24].min, 0, 24, line_height)
+  end
+
+  # Keep the insertion point visible even for wide characters.
+  def visible_input_text
+    text = @name + (@index < @max_char ? '_' : '')
+    text = text[1..-1] while text.size > 1 &&
+      text_size(text).width > contents.width - 24
+    text
   end
 
   # Replace the current text with a preset name, respecting the input limit.
@@ -26209,7 +26687,9 @@ class Scene_ResearchModTextInput < Scene_MenuBase
   end
 
   def start
-    super
+    # Text input can also open from the title screen without a game party.
+    Scene_Base.instance_method(:start).bind(self).call
+    create_background
     ResearchMod.reload_name_input_characters
     @text_title ||= '请输入文字'
     @default_text ||= ''
@@ -26226,14 +26706,7 @@ class Scene_ResearchModTextInput < Scene_MenuBase
     @title_window.y = 0
     @title_window.set_text([@text_title, @help_text].reject(&:empty?).join("\n"))
 
-    actor = $game_party.menu_actor || $game_party.members[0]
-    unless actor
-      return_scene
-      return
-    end
-
-    @edit_actor = actor.clone
-    @edit_actor.name = @default_text
+    @edit_actor = ResearchMod::TextInputValue.new(@default_text)
     @edit_window = Window_ResearchModNameEdit.new(@edit_actor, @max_chars)
     @edit_window.y = @title_window.height
 
@@ -26298,7 +26771,10 @@ class Scene_ResearchModTextInput < Scene_MenuBase
   def on_input_ok
     if @result_handler.respond_to?(:call)
       accepted = @result_handler.call(@edit_window.name)
-      return if accepted == false
+      if accepted == false
+        @input_window.activate
+        return
+      end
     else
       ResearchMod.set_custom_text(@text_key, @edit_window.name)
     end
@@ -28067,6 +28543,9 @@ module ResearchMod
     :block_auto_recruit,
     :auto_items,
     :common_tasks,
+    :party_hp,
+    :inventory_repair,
+    :item_stack_limit,
     :stuck_help
   ].freeze
 end
@@ -28095,5 +28574,2450 @@ class Window_ResearchModCommand
     change_color(system_color, command_enabled?(index))
     draw_text(rect.x + name_width, rect.y, marker_width, rect.height,
               '▶', 2)
+  end
+end
+
+module ResearchMod
+  def self.item_stack_limit_enabled?
+    config_data['item_stack_limit_enabled'] == true
+  end
+
+  def self.item_stack_limit
+    value = config_data['item_stack_limit']
+    value.is_a?(Integer) && (99..9999).include?(value) ? value : 999
+  end
+
+  def self.stack_limit_base_item?(item)
+    [RPG::Item, RPG::Weapon, RPG::Armor].include?(item.class) &&
+      !item.uniq_item? && !item.need_enchant? && !item.name.to_s.empty?
+  end
+
+  def self.stack_limit_database_supported?(database, kind)
+    return true if database.is_a?(Array)
+
+    type = { :weapon => :weapons, :armor => :armors }[kind]
+    type && defined?(::DataBaseEquip) && database.instance_of?(::DataBaseEquip) &&
+      database.instance_variable_get(:@type) == type &&
+      database.instance_variable_get(:@a).is_a?(Array)
+  end
+
+  def self.item_stack_scan(party = $game_party, proposed_limit = nil)
+    result = { :party => party, :entries => [], :issues => [], :signature => [], :total => 0,
+      :complete => false }
+    result[:signature] << [party.object_id, item_stack_limit_enabled?, item_stack_limit, proposed_limit]
+    unless party
+      result[:issues] << '尚未载入队伍，无法检查。'
+      return result
+    end
+    [[:item, :@items, $data_items], [:weapon, :@weapons, $data_weapons],
+     [:armor, :@armors, $data_armors]].each do |kind, variable, database|
+      label = { :item => '物品', :weapon => '武器', :armor => '防具' }[kind]
+      list = party.instance_variable_get(variable)
+      result[:signature] << [kind, list.object_id, database.object_id]
+      unless list.instance_of?(Item_List)
+        result[:issues] << format('%s：背包类型%s，未处理。', label, short_item_name(list.class.to_s, 12))
+        next
+      end
+      unless stack_limit_database_supported?(database, kind)
+        result[:issues] << format('%s：数据库类型%s，未处理。', label, short_item_name(database.class.to_s, 12))
+        next
+      end
+      list.size.times do |index|
+        next if index == 0
+
+        record = Array.instance_method(:[]).bind(list).call(index)
+        next if record.nil?
+
+        item = index < database.size ? database[index] : nil
+        result[:signature] << [kind, index, record.object_id, item.object_id]
+        unless record.instance_of?(Item_Data)
+          result[:issues] << format('%s ID%d：数量记录类型异常，未处理。', label, index)
+          next
+        end
+        count, stored = record.item_number, record.storehouse_item_number
+        result[:signature] << [count, stored, record.item_object.object_id]
+        unless count.is_a?(Integer) && count >= 0 && stored.is_a?(Integer) && stored >= 0
+          result[:issues] << format('%s ID%d：数量格式异常。', label, index)
+          next
+        end
+        next if count == 0 && stored == 0 && record.item_object.nil?
+
+        reason = if !record.item_object.nil?
+                   '含独特物品对象'
+                 elsif item.nil?
+                   '数据库条目缺失'
+                 elsif { :item => RPG::Item, :weapon => RPG::Weapon, :armor => RPG::Armor }[kind] != item.class ||
+                     item.id != index
+                   '物品类型或ID不匹配'
+                 elsif item.name.to_s.empty?
+                   '数据库名称为空'
+                 end
+        if reason
+          result[:issues] << format('%s ID%d：%s，未处理。', label, index, reason)
+          next
+        end
+        result[:signature] << [item.name.to_s.dup, item.uniq_item?, item.need_enchant?]
+        unless stack_limit_base_item?(item)
+          result[:issues] << format('%s ID%d：非普通堆叠记录。', label, index) if count > 0 || stored > 0
+          next
+        end
+        original = party.research_mod_stack_original_max_item_number(item)
+        store_max = party.storehouse_max_item_number(item)
+        unless original.is_a?(Integer) && original >= 0 && store_max.is_a?(Integer) && store_max >= stored
+          result[:issues] << format('%s ID%d：原版上限或仓库异常。', label, index)
+          next
+        end
+        result[:signature] << [original, store_max]
+        if original <= 1
+          result[:issues] << format('%s ID%d：非普通堆叠上限。', label, index) if count > 0 || stored > 0
+          next
+        end
+        limit = proposed_limit ? [original, proposed_limit].max : original
+        next unless count > limit
+
+        excess = count - limit
+        result[:entries] << { :kind => kind, :id => index, :item => item, :list => list,
+          :record => record, :count => count, :stored => stored, :limit => limit,
+          :excess => excess, :room => store_max - stored }
+        result[:total] += excess
+      end
+    end
+    result[:complete] = true
+    result
+  rescue StandardError => error
+    result[:issues] << '检查失败：' + error.class.to_s
+    result
+  end
+
+  def self.item_stack_scan_summary(scan)
+    format('超限%d种／多余%d件／未处理%d项', scan[:entries].size, scan[:total], scan[:issues].size)
+  end
+
+  def self.change_item_stack_setting(key, value)
+    if key == 'item_stack_limit_enabled'
+      return false unless value == true || value == false
+    elsif key == 'item_stack_limit'
+      return false unless value.is_a?(Integer) && (99..9999).include?(value)
+    else
+      return false
+    end
+    set_save_option(key, value)
+  end
+
+  def self.item_stack_setting_warning(key, value)
+    limit = if key == 'item_stack_limit_enabled' && value == false
+              0
+            elsif key == 'item_stack_limit' && item_stack_limit_enabled? && value < item_stack_limit
+              value
+            end
+    return nil unless limit
+
+    scan = item_stack_scan($game_party, limit)
+    scan[:entries].empty? && scan[:issues].empty? ? nil : scan
+  end
+
+  def self.item_stack_cleanup_totals(scan, action)
+    stored = 0
+    scan[:entries].each do |entry|
+      stored += [entry[:room], entry[:excess]].min if action == :store_or_discard
+    end
+    { :stored => stored, :discarded => scan[:total] - stored, :skipped => scan[:issues].size }
+  end
+
+  def self.apply_item_stack_cleanup(snapshot, action)
+    return false unless snapshot.is_a?(Hash) && [:store_or_discard, :discard].include?(action)
+    return false unless snapshot[:party].equal?($game_party) && snapshot[:issues].is_a?(Array) &&
+      snapshot[:complete] && snapshot[:signature].is_a?(Array)
+
+    current = item_stack_scan
+    return false unless current[:complete] && !current[:entries].empty? &&
+      current[:signature] == snapshot[:signature] && current[:issues] == snapshot[:issues]
+
+    current[:entries].each do |entry|
+      record = entry[:record]
+      if action == :store_or_discard
+        record.storehouse_item_number = entry[:stored] + [entry[:room], entry[:excess]].min
+      end
+      record.item_number = entry[:limit]
+    end
+    $game_map.need_refresh = true if $game_map && $game_map.respond_to?(:need_refresh=)
+    begin
+      File.open('research_mod_item_stack_limit.log', 'a') do |file|
+        current[:entries].each do |entry|
+          stored = action == :store_or_discard ? [entry[:room], entry[:excess]].min : 0
+          file.puts(format('%s action=%s kind=%s id=%d before=%d after=%d excess=%d stored=%d discarded=%d skipped=%d',
+            Time.now.strftime('%Y-%m-%d %H:%M:%S'), action, entry[:kind], entry[:id],
+            entry[:count], entry[:limit], entry[:excess], stored, entry[:excess] - stored, current[:issues].size))
+        end
+        current[:issues].each do |reason|
+          file.puts(format('%s action=%s skipped_reason=%s', Time.now.strftime('%Y-%m-%d %H:%M:%S'), action, reason))
+        end
+      end
+    rescue IOError, SystemCallError
+    end
+    true
+  end
+end
+
+class Game_Party
+  alias research_mod_stack_original_max_item_number max_item_number
+
+  def max_item_number(item)
+    original = research_mod_stack_original_max_item_number(item)
+    return original unless original.is_a?(Integer) && original > 1 &&
+      ResearchMod.item_stack_limit_enabled? && ResearchMod.stack_limit_base_item?(item) &&
+      item_container(item).instance_of?(Item_List)
+
+    [original, ResearchMod.item_stack_limit].max
+  end
+end
+
+class Window_ResearchModItemStackLimit < Window_Command
+  attr_reader :mode, :scan, :page
+
+  def initialize(help_window)
+    @stack_help, @mode, @page = help_window, :settings, 0
+    super(0, help_window.height)
+    self.help_window = help_window
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @stack_help.height
+  end
+
+  def show_setting_warning(scan, key, value)
+    @stack_setting_label = if key == 'item_stack_limit_enabled'
+                             value ? '确认开启上限扩展' : '确认关闭上限扩展'
+                           else
+                             format('确认将背包上限改为%d', value)
+                           end
+    show_mode(:warning, scan)
+  end
+
+  def show_mode(mode, scan = nil, page = 0, selected = nil)
+    @stack_cursors ||= ResearchMod::MenuCursorMemory.new
+    @stack_cursors.capture(self, [@mode, @page])
+    @mode, @scan = mode, scan
+    count = scan ? scan[:entries].size + scan[:issues].size : 0
+    @page = [[page, 0].max, [(count - 1) / 200, 0].max].min
+    refresh
+    if selected.nil?
+      @stack_cursors.restore(self, [@mode, @page], false, { :index => 0 })
+    else
+      ResearchMod.restore_menu_cursor(self, { :index => selected })
+    end
+    activate
+    update_help
+  end
+
+  def make_command_list
+    case @mode
+    when :settings
+      add_command('上限扩展：' + (ResearchMod.item_stack_limit_enabled? ? '已开启' : '已关闭'), :toggle)
+      add_command(format('背包上限：%d', ResearchMod.item_stack_limit), :limit)
+      add_command('检查超限物品', :scan)
+      add_command('准备停用……', :prepare)
+    when :prepare
+      add_command('查看超限物品', :scan)
+      ready = @scan[:complete] && !@scan[:entries].empty?
+      add_command('一键放入仓库（不足丢弃）……', :store_or_discard, ready)
+      add_command('一键丢弃多余物品……', :discard, ready)
+      add_command('重新检查', :recheck)
+    when :report
+      rows = @scan[:entries] + @scan[:issues]
+      add_command('加载上一批200项', :previous, @page > 0)
+      rows[@page * 200, 200].to_a.each do |entry|
+        if entry.is_a?(Hash)
+          kind = { :item => '物品', :weapon => '武器', :armor => '防具' }[entry[:kind]]
+          add_command(format('%s ID%d %s 多余%d', kind, entry[:id],
+            ResearchMod.short_item_name(entry[:item].name, 10), entry[:excess]), :detail, true, entry)
+        else
+          add_command(entry, :detail, true, entry)
+        end
+      end
+      add_command('无超限或异常记录', :empty, false) if rows.empty?
+      add_command('加载下一批200项', :next, (@page + 1) * 200 < rows.size)
+    when :store_or_discard, :discard
+      add_command(@mode == :store_or_discard ? '确定转仓并丢弃余量' : '确定丢弃多余数量', :confirm)
+    when :warning
+      add_command('前往整理', :organize)
+      add_command(@stack_setting_label, :apply_setting)
+    end
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless @stack_help
+
+    text = if @mode == :store_or_discard || @mode == :discard
+             totals = ResearchMod.item_stack_cleanup_totals(@scan, @mode)
+             format("涉及%d种，多余%d件；跳过%d项。\n转入仓库%d件，丢弃%d件。\n背包保留原版上限，不动装备／独特实例。\n不自动保存；取消不修改。",
+               @scan[:entries].size, @scan[:total], totals[:skipped], totals[:stored], totals[:discarded])
+           elsif @mode == :warning
+             format("调整后有%d种物品超限，待核对%d项。\n之后增减物品可能导致数量丢失。\n确认只更改设置，不会主动删除物品。\n建议先整理；可返回保持原设置。",
+               @scan[:entries].size, @scan[:issues].size)
+           elsif @mode == :report && current_symbol == :detail
+             entry = current_ext
+             entry.is_a?(Hash) ? format("%s\n背包%d／原版上限%d／多余%d\n仓库%d／可再存%d\n只查看；不会自动删除或保存。",
+               ResearchMod.short_item_name(entry[:item].name, 22), entry[:count], entry[:limit],
+               entry[:excess], entry[:stored], entry[:room]) : entry + "\n此项会跳过，其他可确认记录仍可整理。"
+           elsif @mode == :prepare && [:store_or_discard, :discard].include?(current_symbol) &&
+               (!@scan[:complete] || @scan[:entries].empty?)
+             "没有可确认的普通超限记录，或检查失败。\n附魔模板、未知记录不会强行改写。\n请查看超限物品及未处理原因。\n未修改任何物品。"
+           elsif @mode == :report || @mode == :prepare
+             ResearchMod.item_stack_scan_summary(@scan) + "\n可确认的先处理，未处理项跳过并报告。\n有跳过项时不能确认停用兼容。\n建议整理后关闭扩展，另存新档再移除。"
+           elsif current_symbol == :limit
+             "普通堆叠背包上限：99～9999，默认999。\n不调整仓库、附魔容量或实例数量。\n降低后超限会提醒，可自行决定是否继续。\n输入可取消，设置保存在全局配置。"
+           else
+             "默认关闭；只扩展普通背包堆叠上限。\n保留原版数据结构，不自动增加物品。\n直接移除Mod，超限数量可能被截断。\n请先准备停用、关闭扩展并另存新档。"
+           end
+    @stack_help.set_text(text)
+  end
+
+  def select(index)
+    super
+    update_help
+  end
+end
+
+class Scene_ResearchModItemStackLimit < Scene_Base
+  def start
+    super
+    @stack_help = Window_Help.new(4)
+    @stack_menu = Window_ResearchModItemStackLimit.new(@stack_help)
+    [:toggle, :limit, :scan, :prepare, :store_or_discard, :discard, :recheck,
+     :previous, :next, :detail, :confirm, :organize, :apply_setting].each do |symbol|
+      @stack_menu.set_handler(symbol, method(:select_stack_command))
+    end
+    @stack_menu.set_handler(:cancel, method(:cancel_stack_menu))
+  end
+
+  def select_stack_command
+    case @stack_menu.current_symbol
+    when :toggle
+      finish_stack_setting('item_stack_limit_enabled', !ResearchMod.item_stack_limit_enabled?)
+    when :limit
+      @stack_number ||= Window_ResearchModSaveNumber.new
+      @stack_number.set_handler(:ok, method(:apply_stack_number))
+      @stack_number.set_handler(:cancel, method(:cancel_stack_number))
+      @stack_number.setup(ResearchMod.item_stack_limit, 99, 9999)
+    when :prepare, :recheck
+      @stack_menu.show_mode(:prepare, ResearchMod.item_stack_scan)
+    when :scan
+      @stack_report_parent = @stack_menu.mode
+      @stack_menu.show_mode(:report, ResearchMod.item_stack_scan)
+    when :previous, :next
+      page = @stack_menu.page + (@stack_menu.current_symbol == :previous ? -1 : 1)
+      @stack_menu.show_mode(:report, @stack_menu.scan, page)
+    when :detail
+      @stack_menu.activate
+      @stack_menu.update_help
+    when :store_or_discard, :discard
+      preview_stack_cleanup(@stack_menu.current_symbol)
+    when :confirm
+      apply_stack_cleanup
+    when :organize
+      @pending_stack_setting = nil
+      @stack_menu.show_mode(:prepare, ResearchMod.item_stack_scan)
+    when :apply_setting
+      key, value = @pending_stack_setting
+      current = ResearchMod.item_stack_setting_warning(key, value)
+      if current && (current[:signature] != @stack_menu.scan[:signature] ||
+          current[:issues] != @stack_menu.scan[:issues])
+        @stack_menu.show_setting_warning(current, key, value)
+        Sound.play_buzzer
+      else
+        finish_stack_setting(key, value, true)
+      end
+    end
+  end
+
+  def finish_stack_setting(key, value, confirmed = false)
+    unless confirmed
+      warning = ResearchMod.item_stack_setting_warning(key, value)
+      if warning
+        @pending_stack_setting = [key, value]
+        @stack_menu.show_setting_warning(warning, key, value)
+        return
+      end
+    end
+    @pending_stack_setting = nil
+    saved = ResearchMod.change_item_stack_setting(key, value)
+    @stack_menu.show_mode(:settings, nil, 0, key == 'item_stack_limit' ? 1 : 0)
+    unless saved
+      Sound.play_buzzer
+      @stack_help.set_text("设置保存失败，原设置未修改。\n请检查配置格式及写入权限。\n未自动删物品或覆盖存档，可取消返回。")
+    end
+  end
+
+  def apply_stack_number
+    value = @stack_number.number
+    @stack_number.close.deactivate.hide
+    finish_stack_setting('item_stack_limit', value)
+  end
+
+  def cancel_stack_number
+    @stack_number.close.deactivate.hide
+    @stack_menu.activate
+    @stack_menu.update_help
+  end
+
+  def preview_stack_cleanup(action)
+    scan = ResearchMod.item_stack_scan
+    if !scan[:complete] || scan[:entries].empty?
+      @stack_menu.show_mode(:prepare, scan)
+      Sound.play_buzzer
+      @stack_help.set_text("未执行：没有可确认的超限记录，或检查失败。\n请查看超限物品及跳过原因。\n未修改背包或仓库。")
+      return
+    end
+    @stack_menu.show_mode(action, scan)
+  end
+
+  def apply_stack_cleanup
+    action = @stack_menu.mode
+    totals = ResearchMod.item_stack_cleanup_totals(@stack_menu.scan, action)
+    changed = ResearchMod.apply_item_stack_cleanup(@stack_menu.scan, action)
+    scan = ResearchMod.item_stack_scan
+    @stack_menu.show_mode(:prepare, scan)
+    if changed
+      outcome = scan[:complete] && scan[:entries].empty? && scan[:issues].empty? ?
+        '已无普通超限或未处理项，可关闭扩展。' : '仍有未处理项，不能确认停用兼容。'
+      @stack_help.set_text(format("已转仓%d件，丢弃%d件；跳过%d项。\n%s\n装备及附魔／插槽实例未修改。\n尚未保存；建议检查后另存新档。",
+        totals[:stored], totals[:discarded], totals[:skipped], outcome))
+    else
+      Sound.play_buzzer
+      @stack_help.set_text("未执行：数据、数量或设置已变化，或检查失败。\n请重新检查，再次确认；未修改物品。")
+    end
+  end
+
+  def cancel_stack_menu
+    case @stack_menu.mode
+    when :store_or_discard, :discard
+      @stack_menu.show_mode(:prepare, ResearchMod.item_stack_scan)
+    when :warning
+      key = @pending_stack_setting && @pending_stack_setting[0]
+      @pending_stack_setting = nil
+      @stack_menu.show_mode(:settings, nil, 0, key == 'item_stack_limit' ? 1 : 0)
+    when :report
+      parent = @stack_report_parent || :settings
+      @stack_menu.show_mode(parent, parent == :prepare ? ResearchMod.item_stack_scan : nil)
+    when :prepare
+      @stack_menu.show_mode(:settings)
+    else
+      return_scene
+    end
+  end
+end
+
+class Window_ResearchModCommand
+  alias research_mod_stack_commands make_command_list
+  alias research_mod_stack_help update_help
+
+  def make_command_list
+    research_mod_stack_commands
+    position = @list.index { |command| command[:symbol] == :database_item }
+    @list.insert(position ? position + 1 : @list.size, { :name => '物品数量上限',
+      :symbol => :item_stack_limit, :enabled => true, :ext => nil })
+  end
+
+  def update_help
+    if current_symbol == :item_stack_limit
+      help_window.set_text('调整普通背包堆叠上限；停用前整理多余数量，不自动保存。') if help_window
+    else
+      research_mod_stack_help
+    end
+  end
+end
+
+class Scene_ResearchMod
+  alias research_mod_stack_start start
+
+  def start
+    research_mod_stack_start
+    @command_window.set_handler(:item_stack_limit, method(:open_item_stack_limit))
+  end
+
+  def open_item_stack_limit
+    @research_mod_menu_cursors ||= ResearchMod::MenuCursorMemory.new
+    @research_mod_menu_cursors.capture(@command_window, :child_menu)
+    SceneManager.call(Scene_ResearchModItemStackLimit)
+  end
+end
+
+# Inventory compatibility repairs only recognized scalar counts in base containers.
+module ResearchMod
+  class InventoryCompatibilityError < StandardError; end
+
+  class MenuCursorMemory
+    def initialize
+      @states = {}
+    end
+
+    def capture(window, key)
+      state = ResearchMod.menu_cursor_state(window)
+      @states[key] = state if state
+    end
+
+    def restore(window, key, consume = false, fallback = nil)
+      restored = ResearchMod.restore_menu_cursor(window, @states[key] || fallback)
+      @states.delete(key) if restored && consume
+      restored
+    end
+  end
+
+  def self.menu_cursor_state(window)
+    return unless window && !window.disposed?
+
+    state = { :index => window.index, :top_row => window.top_row }
+    if window.is_a?(Window_Command)
+      state[:symbol], state[:ext] = window.current_symbol, window.current_ext
+      if window.respond_to?(:research_mod_menu_cursor_key)
+        state[:command_key] = window.research_mod_menu_cursor_key(window.index)
+      end
+    elsif window.respond_to?(:item)
+      item = window.item
+      state[:item_id] = item.id if item && item.respond_to?(:id)
+    end
+    if window.respond_to?(:research_mod_menu_cursor_scope)
+      state[:scope] = window.research_mod_menu_cursor_scope
+    end
+    state
+  end
+
+  def self.restore_menu_cursor(window, state)
+    return false unless state && window && !window.disposed?
+    if state.key?(:scope)
+      return false unless window.respond_to?(:research_mod_menu_cursor_scope) &&
+        window.research_mod_menu_cursor_scope == state[:scope]
+    end
+
+    if window.is_a?(Window_Command) && state.key?(:symbol)
+      commands = window.instance_variable_get(:@list)
+      if state.key?(:command_key) && window.respond_to?(:research_mod_menu_cursor_key)
+        index = commands.each_index.find do |command_index|
+          window.research_mod_menu_cursor_key(command_index) == state[:command_key]
+        end
+      else
+        index = commands.index do |command|
+          command[:symbol] == state[:symbol] && command[:ext] == state[:ext]
+        end
+      end
+    elsif state[:item_id]
+      index = window.instance_variable_get(:@data).to_a.index do |item|
+        item && item.respond_to?(:id) && item.id == state[:item_id]
+      end
+    end
+    if index.nil? && window.respond_to?(:research_mod_menu_cursor_fallback_index)
+      index = window.research_mod_menu_cursor_fallback_index(state)
+    end
+    index ||= state[:index] || 0
+    last_top_row = [window.row_max - window.page_row_max, 0].max
+    window.top_row = [[state[:top_row] || 0, 0].max, last_top_row].min
+    window.select([[index, 0].max, window.item_max - 1].min)
+    window.update_help if window.help_window
+    true
+  end
+
+  def self.command_cursor_state(window)
+    menu_cursor_state(window)
+  end
+
+  def self.restore_command_cursor(window, state)
+    window.activate if restore_menu_cursor(window, state)
+  end
+
+  def self.inventory_repair_enabled?
+    config_data['inventory_repair_enabled'] == true
+  end
+
+  def self.set_inventory_repair_enabled(value)
+    set_save_option('inventory_repair_enabled', value)
+  end
+
+  def self.begin_inventory_report(source)
+    @inventory_repair_report = { :source => source, :entries => [], :seen => {},
+      :repaired => 0, :unresolved => 0, :detected => 0, :outcome => '检查中' }
+    @inventory_repair_report_pending = false
+    @inventory_repair_load_failed_notice = false
+    @inventory_repair_report
+  end
+
+  def self.inventory_report
+    @inventory_repair_report
+  end
+
+  def self.inventory_report_summary
+    report = inventory_report
+    return '本次运行尚无检查报告。' unless report
+
+    format('%s：修复%d／待处理%d／仅检测%d', report[:outcome],
+      report[:repaired], report[:unresolved], report[:detected])
+  end
+
+  def self.inventory_report_event(kind, index, value, status, reason, target = nil)
+    report = inventory_report || begin_inventory_report('运行时')
+    key = [kind, index, value.class.to_s, value.is_a?(Integer) ? value : nil, status]
+    return if report[:seen][key]
+
+    report[:seen][key] = true
+    report[status] += 1
+    database = { :item => $data_items, :weapon => $data_weapons, :armor => $data_armors }[kind]
+    item = database[index] if database && index.is_a?(Integer) && index > 0
+    name = item && item.respond_to?(:name) ? item.name.to_s.gsub(/[\r\n\t]/, ' ').strip : ''
+    entry = { :kind => kind, :id => index, :type => value.class.to_s,
+      :count => value.is_a?(Integer) ? value : nil, :status => status, :reason => reason,
+      :target => target, :name => name.empty? ? '名称未知' : name }
+    report[:entries] << entry if report[:entries].size < 200
+    report[:outcome] = report[:unresolved] > 0 ? '发现未处理异常' : '检查完成'
+    begin
+      File.open('research_mod_inventory_repair.log', 'a') do |file|
+        file.puts(format('%s source=%s kind=%s id=%d type=%s count=%s status=%s reason=%s',
+          Time.now.strftime('%Y-%m-%d %H:%M:%S'), report[:source], kind, index,
+          entry[:type], entry[:count], status, reason))
+      end
+    rescue IOError, SystemCallError
+    end
+  end
+
+  def self.inventory_base_context(list, party = $game_party)
+    return nil unless party && list.instance_of?(Item_List)
+
+    [[:item, :@items, $data_items, party], [:weapon, :@weapons, $data_weapons, party],
+     [:armor, :@armors, $data_armors, party]].find do |kind, variable, database, owner|
+      party.instance_variable_get(variable).equal?(list)
+    end
+  end
+
+  def self.check_inventory_entry(list, index, context, repair)
+    return true if index == 0
+
+    value = Array.instance_method(:[]).bind(list).call(index)
+    return true if value.nil? || value.is_a?(Item_Data)
+    return true if value.respond_to?(:item_number) && value.respond_to?(:storehouse_item_number)
+
+    kind, variable, database = context
+    item = database[index] if database && index > 0
+    expected_class = { :item => RPG::Item, :weapon => RPG::Weapon, :armor => RPG::Armor }[kind]
+    recognized = value.is_a?(Integer) && value >= 0 && item.instance_of?(expected_class) &&
+      !item.name.to_s.empty? && !item.enchant_item? && !item.socket_item?
+    unless recognized
+      inventory_report_event(kind, index, value, :unresolved, '未知结构或非普通物品，保留原记录')
+      return false
+    end
+    if repair
+      data = Item_Data.new
+      data.item_number = value
+      Array.instance_method(:[]=).bind(list).call(index, data)
+      inventory_report_event(kind, index, value, :repaired, '数量已转标准记录；保留基础物品，不生成附魔或插槽',
+        { :party => context[3], :list => list, :record => data, :item => item })
+    else
+      inventory_report_event(kind, index, value, :detected, '可转换的整数数量；保护关闭，未修改')
+    end
+    true
+  end
+
+  def self.check_inventory_list(list, context, repair)
+    safe = true
+    list.size.times do |index|
+      safe = false unless check_inventory_entry(list, index, context, repair)
+    end
+    safe
+  end
+
+  def self.check_party_inventory(party, repair)
+    safe = true
+    [:@items, :@weapons, :@armors].each do |variable|
+      list = party.instance_variable_get(variable)
+      context = inventory_base_context(list, party)
+      next unless context
+
+      safe = false unless check_inventory_list(list, context, repair)
+    end
+    report = inventory_report
+    report[:outcome] = safe ? '检查完成' : '发现未处理异常' if report
+    safe
+  end
+
+  def self.require_safe_inventory(safe)
+    return if safe
+
+    raise InventoryCompatibilityError,
+      'Inventory repair stopped: unknown records preserved; see research_mod_inventory_repair.log'
+  end
+
+  def self.inventory_removal_target(entry)
+    return nil unless inventory_repair_enabled? && inventory_report && entry.is_a?(Hash)
+    return nil unless inventory_report[:entries].any? { |reported| reported.equal?(entry) }
+    return nil unless entry[:status] == :repaired && !entry[:removed_count]
+
+    target = entry[:target]
+    return nil unless target.is_a?(Hash) && target[:party].equal?($game_party)
+
+    list = target[:list]
+    context = inventory_base_context(list)
+    return nil unless context && context[0] == entry[:kind]
+
+    item = context[2][entry[:id]]
+    record = Array.instance_method(:[]).bind(list).call(entry[:id])
+    return nil unless item.equal?(target[:item]) && record.equal?(target[:record]) && record.instance_of?(Item_Data)
+    return nil unless record.item_number.is_a?(Integer) && record.item_number > 0
+
+    target.merge(:entry => entry, :report => inventory_report, :count => record.item_number)
+  end
+
+  def self.remove_reported_inventory_item(snapshot)
+    return false unless snapshot.is_a?(Hash)
+
+    current = inventory_removal_target(snapshot[:entry])
+    return false unless current && [:party, :list, :record, :item, :report].all? do |key|
+      current[key].equal?(snapshot[key])
+    end
+    return false unless current[:count] == snapshot[:count]
+
+    current[:record].item_number = 0
+    entry = current[:entry]
+    entry[:removed_count] = current[:count]
+    $game_map.need_refresh = true if $game_map && $game_map.respond_to?(:need_refresh=)
+    begin
+      File.open('research_mod_inventory_repair.log', 'a') do |file|
+        file.puts(format('%s source=%s kind=%s id=%d removed=%d scope=backpack_only',
+          Time.now.strftime('%Y-%m-%d %H:%M:%S'), current[:report][:source],
+          entry[:kind], entry[:id], current[:count]))
+      end
+    rescue IOError, SystemCallError
+    end
+    true
+  end
+
+  def self.inventory_load_context?
+    @inventory_repair_loading == true
+  end
+
+  def self.inventory_load_begin(index)
+    label = index.is_a?(Integer) ? format('读档%d', index + 1) : '读档' + index.to_s
+    begin_inventory_report(label)
+    @inventory_repair_loading = true
+  end
+
+  def self.inventory_load_end(success)
+    report = inventory_report
+    if report
+      report[:outcome] = success ? '读档完成' : '读档未完成，原文件未修改'
+      @inventory_repair_report_pending = success && !report[:entries].empty?
+      @inventory_repair_load_failed_notice = !success && report[:unresolved] > 0
+    end
+    @inventory_repair_loading = false
+  end
+
+  def self.consume_inventory_report_notice
+    return false unless inventory_repair_enabled? && @inventory_repair_report_pending
+
+    @inventory_repair_report_pending = false
+    true
+  end
+
+  def self.consume_inventory_load_failure_notice
+    return false unless inventory_repair_enabled? && @inventory_repair_load_failed_notice
+
+    @inventory_repair_load_failed_notice = false
+    true
+  end
+end
+
+class Item_List
+  alias research_mod_inventory_original_get []
+  alias research_mod_inventory_original_items items
+
+  def [](*arguments)
+    if ResearchMod.inventory_repair_enabled? && arguments.size == 1 &&
+        arguments[0].is_a?(Integer) && arguments[0] > 0
+      context = ResearchMod.inventory_base_context(self)
+      if context
+        ResearchMod.require_safe_inventory(
+          ResearchMod.check_inventory_entry(self, arguments[0], context, true))
+      end
+    end
+    research_mod_inventory_original_get(*arguments)
+  end
+
+  def items(container, &block)
+    if ResearchMod.inventory_repair_enabled?
+      context = ResearchMod.inventory_base_context(self)
+      if context && context[2].equal?(container)
+        ResearchMod.require_safe_inventory(ResearchMod.check_inventory_list(self, context, true))
+      end
+    end
+    research_mod_inventory_original_items(container, &block)
+  end
+end
+
+class Game_Party
+  alias research_mod_inventory_original_pre_update pre_update
+
+  def pre_update
+    if ResearchMod.inventory_repair_enabled?
+      ResearchMod.require_safe_inventory(ResearchMod.check_party_inventory(self, true))
+    end
+    research_mod_inventory_original_pre_update
+  end
+end
+
+module DataManager
+  class << self
+    alias research_mod_inventory_original_extract extract_save_contents
+    alias research_mod_inventory_original_load load_game_without_rescue
+
+    def extract_save_contents(contents)
+      if ResearchMod.inventory_repair_enabled? && ResearchMod.inventory_load_context? &&
+          contents.is_a?(Hash) && contents[:party].is_a?(Game_Party)
+        ResearchMod.require_safe_inventory(ResearchMod.check_party_inventory(contents[:party], true))
+      end
+      research_mod_inventory_original_extract(contents)
+    end
+
+    def load_game_without_rescue(index)
+      return research_mod_inventory_original_load(index) unless ResearchMod.inventory_repair_enabled?
+
+      success = false
+      ResearchMod.inventory_load_begin(index)
+      begin
+        result = research_mod_inventory_original_load(index)
+        success = result == true
+        result
+      ensure
+        ResearchMod.inventory_load_end(success)
+      end
+    end
+  end
+end
+
+class Window_ResearchModInventoryRepair < Window_Command
+  attr_reader :mode, :report_entry
+
+  def initialize(help_window, allow_scan, report_mode)
+    @repair_help = help_window
+    @allow_scan = allow_scan
+    @mode = report_mode ? :report : :settings
+    super(0, 0)
+    self.help_window = help_window
+    update_help
+  end
+
+  def window_width
+    Graphics.width
+  end
+
+  def window_height
+    Graphics.height - @repair_help.height
+  end
+
+  def show_mode(mode, entry = nil, snapshot = nil, selected_index = nil)
+    @repair_cursors ||= ResearchMod::MenuCursorMemory.new
+    @repair_cursors.capture(self, [@mode, @report_entry && @report_entry.object_id])
+    @mode = mode
+    @report_entry, @removal_snapshot = entry, snapshot
+    refresh
+    if selected_index.nil?
+      @repair_cursors.restore(self, [@mode, entry && entry.object_id], false, { :index => 0 })
+    else
+      ResearchMod.restore_menu_cursor(self, { :index => selected_index })
+    end
+    activate
+    update_help
+  end
+
+  def make_command_list
+    if @mode == :report
+      report = ResearchMod.inventory_report
+      if report && !report[:entries].empty?
+        names = { :item => '物品', :weapon => '武器', :armor => '防具' }
+        states = { :repaired => '已修复', :unresolved => '未处理', :detected => '仅检测' }
+        report[:entries].each do |entry|
+          add_command(format('%s ID%d %s【%s】', names[entry[:kind]], entry[:id],
+            ResearchMod.short_item_name(entry[:name], 10),
+            entry[:removed_count] ? '已移除背包数量' : states[entry[:status]]), :detail, true, entry)
+        end
+      else
+        add_command('无异常记录', :empty, false)
+      end
+    elsif @mode == :detail
+      add_command('查看详情', :view_detail)
+      add_command('移除此项背包物品……', :remove_item,
+        @allow_scan && !ResearchMod.inventory_removal_target(@report_entry).nil?)
+    elsif @mode == :confirm_remove
+      add_command('确定移除此物品', :confirm_remove)
+    else
+      add_command('背包兼容修复：' + (ResearchMod.inventory_repair_enabled? ? '已开启' : '已关闭'), :toggle)
+      add_command('检查当前背包', :scan, @allow_scan)
+      add_command('查看本次修复报告', :report)
+    end
+    add_command('返回', :cancel)
+  end
+
+  def update_help
+    return unless @repair_help
+
+    entry = current_ext
+    text = if @mode == :confirm_remove
+             target = @removal_snapshot
+             names = { :item => '物品', :weapon => '武器', :armor => '防具' }
+             format("%s ID%d %s\n当前背包有%d件，将全部移除。\n不影响角色装备、仓库及附魔／插槽实例。\n仅修改内存，不自动保存；取消不修改。",
+               names[@report_entry[:kind]], @report_entry[:id],
+               ResearchMod.short_item_name(target[:item].name, 16), target[:count])
+           elsif @mode == :detail
+             target = ResearchMod.inventory_removal_target(@report_entry)
+             if @report_entry[:removed_count]
+               format("已移除背包数量：%d件；原档未覆盖。\n角色装备、仓库及附魔／插槽实例未修改。\n建议检查后另存新档；返回可查看其他报告。",
+                 @report_entry[:removed_count])
+             elsif current_symbol == :remove_item
+               target && @allow_scan ?
+                 "只移除当前记录的全部背包数量，下一步需确认。\n保留原物品位置及其他字段，不移动背包ID。\n不动装备、仓库和附魔／插槽实例。\n仅已修复且归属有效的记录可移除；需开启保护。" :
+                 "当前记录不可移除：需开启保护且已完成修复。\n仅支持当前队伍、原记录及正整数背包数量。\n标题／失败读档报告、未知记录或过期报告不可操作。\n请在游戏内重新检查，原记录不会被强行删除。"
+             else
+               format("%s\n原类型：%s，原数量：%s\n%s\n移除仅清空背包数量，不自动保存。",
+                 ResearchMod.inventory_report_summary, @report_entry[:type],
+                 @report_entry[:count], @report_entry[:reason])
+             end
+           elsif @mode == :report && current_symbol == :detail
+             format("%s\n%s；原类型：%s，数量：%s\n%s\n只修改内存；原档未覆盖，建议检查后另存新档。",
+               ResearchMod.inventory_report_summary, ResearchMod.inventory_report[:source],
+               entry[:type], entry[:count], entry[:reason])
+           elsif @mode == :report
+             ResearchMod.inventory_report_summary + "\n详情最多显示200条，日志保留检测记录。\n不自动删除物品，不覆盖原存档。\n关闭保护不会撤销已完成的内存修复。"
+           elsif current_symbol == :scan
+             "检查普通物品、武器及防具背包。\n开启保护：修复可确认的整数数量；关闭：只检查。\n附魔、插槽及自定义结构不强行转换。\n未知异常保留记录，不保证任意损坏都能修复。"
+           else
+             "默认关闭；开启后读档前检查背包。\n可修复误加迷宫附魔装备的背包数量格式错误。\n不补附魔属性或插槽，不保证所有报错。\n不自动删物品或覆盖存档；建议另存新档。"
+           end
+    @repair_help.set_text(text)
+  end
+
+  def select(index)
+    super
+    update_help
+  end
+end
+
+class Scene_ResearchModInventoryRepair < Scene_Base
+  def prepare(allow_scan = false, report_mode = false)
+    @allow_scan, @report_mode = allow_scan, report_mode
+  end
+
+  def start
+    super
+    @repair_help = Window_Help.new(4)
+    @repair_help.y = Graphics.height - @repair_help.height
+    @repair_menu = Window_ResearchModInventoryRepair.new(@repair_help, @allow_scan, @report_mode)
+    @repair_menu.set_handler(:toggle, method(:toggle_inventory_repair))
+    @repair_menu.set_handler(:scan, method(:scan_inventory))
+    @repair_menu.set_handler(:report, method(:show_inventory_report))
+    @repair_menu.set_handler(:detail, method(:show_inventory_detail))
+    @repair_menu.set_handler(:view_detail, method(:view_inventory_detail))
+    @repair_menu.set_handler(:remove_item, method(:confirm_inventory_removal))
+    @repair_menu.set_handler(:confirm_remove, method(:apply_inventory_removal))
+    @repair_menu.set_handler(:cancel, method(:cancel_inventory_repair))
+  end
+
+  def toggle_inventory_repair
+    saved = ResearchMod.set_inventory_repair_enabled(!ResearchMod.inventory_repair_enabled?)
+    @repair_menu.refresh if saved
+    @repair_menu.activate
+    @repair_menu.update_help
+    unless saved
+      Sound.play_buzzer
+      @repair_help.set_text("设置保存失败，原配置未修改。\n请检查 GouqiConfig.json 格式及写入权限。\n可重试或取消返回。")
+    end
+  end
+
+  def scan_inventory
+    return unless @allow_scan && $game_party
+
+    ResearchMod.begin_inventory_report('手动检查')
+    ResearchMod.check_party_inventory($game_party, ResearchMod.inventory_repair_enabled?)
+    show_inventory_report
+  end
+
+  def show_inventory_report
+    @repair_menu.show_mode(:report)
+  end
+
+  def show_inventory_detail
+    @repair_menu.show_mode(:detail, @repair_menu.current_ext)
+  end
+
+  def view_inventory_detail
+    @repair_menu.activate
+    @repair_menu.update_help
+  end
+
+  def confirm_inventory_removal
+    snapshot = ResearchMod.inventory_removal_target(@repair_menu.report_entry) if @allow_scan
+    unless snapshot
+      inventory_removal_failed
+      return
+    end
+    @inventory_removal_snapshot = snapshot
+    @repair_menu.show_mode(:confirm_remove, @repair_menu.report_entry, snapshot)
+  end
+
+  def apply_inventory_removal
+    entry = @repair_menu.report_entry
+    removed = @allow_scan && ResearchMod.remove_reported_inventory_item(@inventory_removal_snapshot)
+    @inventory_removal_snapshot = nil
+    @repair_menu.show_mode(:detail, entry)
+    inventory_removal_failed unless removed
+  end
+
+  def inventory_removal_failed
+    Sound.play_buzzer
+    @repair_menu.activate
+    @repair_help.set_text("移除未执行：物品数量、记录归属或保护开关已变化。\n请返回并重新检查当前背包，再次确认。\n未删除任何记录，未覆盖存档。")
+  end
+
+  def cancel_inventory_repair
+    if @repair_menu.mode == :confirm_remove
+      @inventory_removal_snapshot = nil
+      @repair_menu.show_mode(:detail, @repair_menu.report_entry)
+    elsif @repair_menu.mode == :detail
+      @repair_menu.show_mode(:report)
+    elsif @repair_menu.mode == :report && !@report_mode
+      @repair_menu.show_mode(:settings)
+    else
+      return_scene
+    end
+  end
+end
+
+class Window_TitleCommand
+  alias research_mod_inventory_title_commands make_command_list
+  alias research_mod_inventory_title_width window_width
+
+  def make_command_list
+    research_mod_inventory_title_commands
+    add_command('存档兼容修复', :inventory_repair)
+  end
+
+  def window_width
+    research_mod_inventory_title_width
+  end
+end
+
+class Scene_Title
+  alias research_mod_inventory_title_create create_command_window
+
+  def create_command_window
+    research_mod_inventory_title_create
+    @command_window.set_handler(:inventory_repair, method(:open_inventory_repair))
+    if @research_mod_menu_cursors
+      @research_mod_menu_cursors.restore(@command_window, :child_menu, true)
+    end
+  end
+
+  def open_inventory_repair
+    @research_mod_menu_cursors ||= ResearchMod::MenuCursorMemory.new
+    @research_mod_menu_cursors.capture(@command_window, :child_menu)
+    SceneManager.call(Scene_ResearchModInventoryRepair)
+    SceneManager.scene.prepare(false)
+  end
+end
+
+class Window_ResearchModCommand
+  alias research_mod_inventory_commands make_command_list
+  alias research_mod_inventory_command_help update_help
+
+  def make_command_list
+    research_mod_inventory_commands
+    position = @list.index { |command| command[:symbol] == :save_notes }
+    @list.insert(position ? position + 1 : @list.size, { :name => '背包数据兼容修复',
+      :symbol => :inventory_repair, :enabled => true, :ext => nil })
+  end
+
+  def update_help
+    if current_symbol == :inventory_repair
+      help_window.set_text('全局兼容保护默认关闭；检查背包或查看修复报告，不自动删除物品。') if help_window
+    else
+      research_mod_inventory_command_help
+    end
+  end
+end
+
+class Scene_ResearchMod
+  alias research_mod_inventory_menu_start start
+
+  def start
+    research_mod_inventory_menu_start
+    @command_window.set_handler(:inventory_repair, method(:open_inventory_repair))
+    if @research_mod_menu_cursors
+      @research_mod_menu_cursors.restore(@command_window, :child_menu, true)
+    end
+  end
+
+  def open_inventory_repair
+    @research_mod_menu_cursors ||= ResearchMod::MenuCursorMemory.new
+    @research_mod_menu_cursors.capture(@command_window, :child_menu)
+    SceneManager.call(Scene_ResearchModInventoryRepair)
+    SceneManager.scene.prepare(true)
+  end
+end
+
+class Scene_Map
+  alias research_mod_inventory_map_start start
+
+  def start
+    research_mod_inventory_map_start
+    if !scene_changing? && ResearchMod.consume_inventory_report_notice
+      SceneManager.call(Scene_ResearchModInventoryRepair)
+      SceneManager.scene.prepare(true, true)
+    end
+  end
+end
+
+class Scene_Load
+  alias research_mod_inventory_load_selection on_savefile_ok
+
+  def on_savefile_ok
+    result = research_mod_inventory_load_selection
+    if !scene_changing? && ResearchMod.consume_inventory_load_failure_notice
+      SceneManager.call(Scene_ResearchModInventoryRepair)
+      SceneManager.scene.prepare(false, true)
+    end
+    result
+  end
+end
+
+module ResearchMod
+  def self.enemy_action_skill?(skill)
+    skill && !skill.name.to_s.empty? &&
+      !(skill.respond_to?(:ability?) && skill.ability?)
+  end
+
+  def self.default_enemy_action_plan
+    { :enabled => false, :mode => :sequence, :skills => [], :cursor => 0,
+      :action_times => nil }
+  end
+
+  def self.copy_enemy_action_plan(plan)
+    plan = {} unless plan.is_a?(Hash)
+    copy = default_enemy_action_plan
+    if plan[:skills].is_a?(Array)
+      copy[:skills] = plan[:skills].select do |skill_id|
+        skill_id.is_a?(Integer) && skill_id > 0 && enemy_action_skill?($data_skills[skill_id])
+      end
+    end
+    copy[:enabled] = plan[:enabled] == true && !copy[:skills].empty?
+    copy[:mode] = :random if plan[:mode] == :random
+    count = plan[:action_times]
+    if count == :list_length || (count.is_a?(Integer) && count >= 0 && count <= 20)
+      copy[:action_times] = count
+    end
+    copy
+  end
+
+  def self.enemy_action_times(plan)
+    value = plan[:action_times]
+    if value == :list_length
+      count = plan[:skills].size
+      return count > 0 ? count : nil
+    end
+    value.is_a?(Integer) && value >= 0 && value <= 20 ? value : nil
+  end
+
+  def self.pre_battle_enemy_action_enabled?
+    $game_system && $game_system.instance_variable_get(:@research_mod_pre_battle_enemy_action_enabled) == true
+  end
+
+  def self.toggle_pre_battle_enemy_action
+    return unless $game_system
+
+    $game_system.instance_variable_set(:@research_mod_pre_battle_enemy_action_enabled,
+      !pre_battle_enemy_action_enabled?)
+  end
+
+  def self.pre_battle_enemy_action_plan
+    return default_enemy_action_plan unless $game_system
+
+    plan = $game_system.instance_variable_get(:@research_mod_pre_battle_enemy_action_plan)
+    unless plan.is_a?(Hash)
+      plan = default_enemy_action_plan
+      $game_system.instance_variable_set(:@research_mod_pre_battle_enemy_action_plan, plan)
+    end
+    plan
+  end
+
+  def self.save_pre_battle_enemy_action_plan(plan)
+    return unless $game_system
+
+    $game_system.instance_variable_set(:@research_mod_pre_battle_enemy_action_plan,
+      copy_enemy_action_plan(plan))
+  end
+
+  def self.clear_pre_battle_enemy_action_plan
+    return unless $game_system
+
+    save_pre_battle_enemy_action_plan(default_enemy_action_plan)
+    $game_system.instance_variable_set(:@research_mod_pre_battle_enemy_action_enabled, false)
+  end
+
+  def self.apply_pre_battle_enemy_action_plan
+    return unless pre_battle_mod_enabled? && pre_battle_enemy_action_enabled?
+
+    $game_troop.members.each do |enemy|
+      enemy.research_mod_set_enemy_action_plan(pre_battle_enemy_action_plan)
+    end
+  end
+
+  def self.enemy_action_skills(enemy, kind, type_id = nil)
+    entries = if kind == :native
+                enemy.all_actions.map { |action| $data_skills[action.skill_id] }
+              else
+                all_skill_entries(type_id)
+              end
+    entries.compact.select { |skill| enemy_action_skill?(skill) }.
+      uniq.sort_by { |skill| skill.id }
+  end
+
+  def self.enemy_action_skill_page(entries, start_id)
+    start_id = [start_id.to_i, 1].max
+    previous = entries.select { |skill| skill.id < start_id }.
+      last(LEARNING_DATABASE_PAGE_SIZE)
+    following = entries.select { |skill| skill.id >= start_id }
+    {
+      :entries => following.first(LEARNING_DATABASE_PAGE_SIZE),
+      :previous => previous.empty? ? nil : previous.first.id,
+      :next => following[LEARNING_DATABASE_PAGE_SIZE] &&
+        following[LEARNING_DATABASE_PAGE_SIZE].id
+    }
+  end
+end
+
+class Game_Battler
+  alias research_mod_enemy_plan_make_actions make_actions
+
+  def make_actions
+    result = research_mod_enemy_plan_make_actions
+    @research_mod_enemy_plan_slots = @actions.size if enemy?
+    result
+  end
+end
+
+class Game_Enemy
+  def research_mod_enemy_action_plan
+    @research_mod_enemy_action_plan ||= ResearchMod.default_enemy_action_plan
+  end
+
+  def research_mod_enemy_action_times
+    ResearchMod.enemy_action_times(research_mod_enemy_action_plan)
+  end
+
+  def research_mod_set_enemy_action_plan(plan)
+    @research_mod_enemy_action_plan = ResearchMod.copy_enemy_action_plan(plan)
+  end
+
+  alias research_mod_enemy_plan_make_action_times make_action_times
+  alias research_mod_enemy_plan_min_action_times min_action_times
+  alias research_mod_enemy_plan_max_action_times max_action_times
+
+  def make_action_times
+    fixed = research_mod_enemy_action_times
+    @research_mod_enemy_plan_generated_fixed_count = fixed
+    return @research_mod_enemy_plan_rebuild_slots unless @research_mod_enemy_plan_rebuild_slots.nil?
+
+    original = research_mod_enemy_plan_make_action_times
+    @research_mod_enemy_plan_original_slots = original
+    fixed.nil? ? original : fixed
+  end
+
+  def min_action_times
+    fixed = research_mod_enemy_action_times
+    fixed.nil? ? research_mod_enemy_plan_min_action_times : fixed
+  end
+
+  def max_action_times
+    fixed = research_mod_enemy_action_times
+    fixed.nil? ? research_mod_enemy_plan_max_action_times : fixed
+  end
+
+  def research_mod_enemy_action_plan_active?
+    plan = research_mod_enemy_action_plan
+    plan[:enabled] && !plan[:skills].empty?
+  end
+
+  def research_mod_reset_enemy_action_plan
+    @research_mod_enemy_action_plan = nil
+  end
+
+  def research_mod_apply_enemy_action_plan
+    return unless movable? && !cant_move?
+    return if @actions.any? { |action| action.forcing || action.symbol != :count }
+
+    fixed = research_mod_enemy_action_times
+    if fixed != @research_mod_enemy_plan_generated_fixed_count
+      @research_mod_enemy_plan_rebuild_slots = fixed ||
+        @research_mod_enemy_plan_original_slots || @research_mod_enemy_plan_slots || @actions.size
+      begin
+        make_actions
+      ensure
+        @research_mod_enemy_plan_rebuild_slots = nil
+      end
+    end
+    return unless research_mod_enemy_action_plan_active?
+
+    plan = research_mod_enemy_action_plan
+    count = fixed || @research_mod_enemy_plan_slots || @actions.size
+    @actions = Array.new(count) do |ordinal|
+      skill_id = if plan[:mode] == :random
+                   plan[:skills].sample
+                 else
+                   plan[:skills][(plan[:cursor] + ordinal) % plan[:skills].size]
+                 end
+      action = Game_Action.new(self)
+      action.set_symbol(:count)
+      action.set_skill(skill_id)
+      action.research_mod_enemy_plan_ordinal = ordinal
+      action
+    end
+  end
+
+  def research_mod_enemy_plan_skill_usable?(skill)
+    return false unless skill && usable?(skill)
+    return false if @recharge_skills && @recharge_skills[skill.id].to_i > 0
+    return false if $game_party.lonely? && skill.lonely_unused?
+
+    true
+  end
+
+  alias research_mod_enemy_plan_on_battle_end on_battle_end
+
+  def on_battle_end
+    research_mod_enemy_plan_on_battle_end
+  ensure
+    research_mod_reset_enemy_action_plan
+    @research_mod_enemy_plan_slots = nil
+    @research_mod_enemy_plan_original_slots = nil
+    @research_mod_enemy_plan_generated_fixed_count = nil
+    @research_mod_enemy_plan_rebuild_slots = nil
+  end
+end
+
+class Game_Action
+  attr_accessor :research_mod_enemy_plan_ordinal
+
+  def research_mod_enemy_plan_action?
+    !@research_mod_enemy_plan_ordinal.nil?
+  end
+
+  alias research_mod_enemy_plan_prepare prepare
+
+  def prepare
+    if research_mod_enemy_plan_action? && !@research_mod_enemy_plan_prepared
+      plan = subject.research_mod_enemy_action_plan
+      plan[:cursor] = (plan[:cursor] + 1) % plan[:skills].size unless plan[:skills].empty?
+      @research_mod_enemy_plan_prepared = true
+    end
+    research_mod_enemy_plan_prepare
+  end
+end
+
+module BattleManager
+  class << self
+    alias research_mod_enemy_plan_make_action_orders make_action_orders
+
+    def make_action_orders
+      research_mod_enemy_plan_make_action_orders
+      assigned = @action_battlers.select do |entry|
+        entry.is_a?(Game_Action) && entry.research_mod_enemy_plan_action? &&
+          entry.subject.research_mod_enemy_action_plan[:mode] == :sequence
+      end
+      assigned.group_by { |action| action.subject }.each_value do |actions|
+        ordered = actions.sort_by { |action| action.research_mod_enemy_plan_ordinal }
+        @action_battlers.map! do |entry|
+          actions.include?(entry) ? ordered.shift : entry
+        end
+      end
+      unless assigned.empty?
+        @fastest_actions = [@action_battlers.first].compact
+        while @fastest_actions.last && @fastest_actions.last.chain_action
+          @fastest_actions << @fastest_actions.last.chain_action
+        end
+      end
+    end
+  end
+end
+
+class Scene_Battle
+  alias research_mod_enemy_plan_turn_start turn_start
+  alias research_mod_enemy_plan_use_item use_item
+  alias research_mod_enemy_plan_battle_start battle_start
+
+  def battle_start
+    $game_troop.members.each { |enemy| enemy.research_mod_reset_enemy_action_plan }
+    ResearchMod.apply_pre_battle_enemy_action_plan
+    research_mod_enemy_plan_battle_start
+  end
+
+  def turn_start
+    $game_troop.members.each { |enemy| enemy.research_mod_apply_enemy_action_plan }
+    research_mod_enemy_plan_turn_start
+  end
+
+  def use_item
+    action = @subject.current_action
+    if action && action.research_mod_enemy_plan_action? &&
+       !@subject.research_mod_enemy_plan_skill_usable?(action.item)
+      name = action.item ? ResearchMod.short_item_name(action.item.name) : '无效技能'
+      @log_window.add_text(format('%s：%s无法使用，跳过本次行动。',
+        ResearchMod.short_item_name(@subject.name), name))
+      @subject.action_count += 1 if action.symbol == :count
+      return
+    end
+    research_mod_enemy_plan_use_item
+  end
+end
+
+class ResearchMod::EnemyActionPreset
+  def research_mod_enemy_action_plan
+    ResearchMod.pre_battle_enemy_action_plan
+  end
+
+  def research_mod_reset_enemy_action_plan
+    ResearchMod.clear_pre_battle_enemy_action_plan
+  end
+
+  def research_mod_enemy_action_times
+    ResearchMod.enemy_action_times(research_mod_enemy_action_plan)
+  end
+
+  def name
+    '敌方全体预设'
+  end
+
+  def actions
+    []
+  end
+
+  def skill_mp_cost(skill)
+    skill.mp_cost
+  end
+
+  def skill_tp_cost(skill)
+    skill.tp_cost
+  end
+end
+
+class Window_ResearchModEnemyActionHelp < Window_ResearchModAllSkillHelp
+  def set_enemy_skill(enemy, skill)
+    key = skill ? [enemy.object_id, skill.id, contents_width, contents_height] : nil
+    return if @skill_key == key
+
+    @skill_key = key
+    lines = ['请选择技能；确认追加到行动列表。']
+    if skill
+      scopes = ['无目标', '对手单体', '对手全体', '随机对手1体',
+        '随机对手2体', '随机对手3体', '随机对手4体', '友方单体',
+        '友方全体', '阵亡友方单体', '阵亡友方全体', '使用者']
+      lines = [format('技能 ID：%d', skill.id), '名称：' + skill.name.to_s,
+        '所属：' + all_skill_type_label(skill, nil),
+        '目标：' + (scopes[skill.scope] || skill.scope.to_s),
+        format('消耗：MP %d／SP %d', enemy.skill_mp_cost(skill), enemy.skill_tp_cost(skill)),
+        '其他消耗和特殊条件仍按原版执行。', '说明：']
+      lines.concat(skill.description.to_s.gsub(92.chr + 'n', 10.chr).split(/\r?\n/))
+      if enemy.is_a?(ResearchMod::EnemyActionPreset)
+        lines << '此处显示基础消耗；实际消耗和可用性由战斗中的敌人决定。'
+      else
+        lines << (enemy.research_mod_enemy_plan_skill_usable?(skill) ?
+          '当前可用；实际释放时重新检查。' : '当前不可用；轮到时若仍不可用则跳过。')
+      end
+      lines << '确认追加一项；可重复添加。'
+    end
+    @pages = build_pages(wrap_lines(lines))
+    @page = 0
+    refresh
+  end
+end
+
+class Window_ResearchModEnemyActionMenu < Window_Command
+  attr_reader :mode, :data, :enemy
+  attr_accessor :detail_window
+
+  def initialize(help_window)
+    @mode = :enemies
+    @data = {}
+    @plan_help_window = help_window
+    super(0, 0)
+    self.z = 600
+    self.help_window = help_window
+    hide
+    deactivate
+  end
+
+  def window_width
+    @mode == :skills ? ResearchMod.class_learning_half_width : Graphics.width
+  end
+
+  def window_height
+    @mode == :skills ? Graphics.height : Graphics.height - @plan_help_window.height
+  end
+
+  def setup(mode, data, enemy, selected_index = 0)
+    @mode, @data, @enemy = mode, data.dup, enemy
+    self.width = window_width
+    self.height = window_height
+    refresh
+    select([[selected_index, 0].max, item_max - 1].min)
+    show
+    activate
+    update_help
+  end
+
+  def plan
+    @enemy.research_mod_enemy_action_plan
+  end
+
+  def preset?
+    @enemy.is_a?(ResearchMod::EnemyActionPreset)
+  end
+
+  def skill_label(skill)
+    format('%d %s', skill.id, ResearchMod.short_item_name(skill.name, 14))
+  end
+
+  def make_command_list
+    case @mode
+    when :enemies
+      $game_troop.members.each_with_index do |enemy, position|
+        next unless enemy && enemy.exist?
+
+        config = enemy.research_mod_enemy_action_plan
+        status = config[:skills].empty? ? '未设置' :
+          format('%s／%d项', config[:enabled] ? '已启用' : '已停用', config[:skills].size)
+        fixed = enemy.research_mod_enemy_action_times
+        if config[:action_times] == :list_length
+          status += fixed.nil? ? '／列表空，原版次数' : format('／列表%d次', fixed)
+        else
+          status += format('／%d次', fixed) unless fixed.nil?
+        end
+        add_command(format('%d号位：%s【%s】', position + 1,
+          ResearchMod.short_item_name(enemy.name, 13), status), :select, true, enemy)
+      end
+    when :settings
+      if preset?
+        add_command('自动应用：' + (ResearchMod.pre_battle_enemy_action_enabled? ? '已开启' : '已关闭'), :auto_apply)
+      end
+      add_command('指定技能开关：' + (plan[:enabled] ? '已开启' : '已关闭'),
+        :toggle, !plan[:skills].empty?)
+      fixed = @enemy.research_mod_enemy_action_times
+      count_label = if plan[:action_times] == :list_length
+                      fixed.nil? ? '技能列表长度（列表为空，使用原版）' :
+                        format('技能列表长度（当前%d次）', fixed)
+                    else
+                      fixed.nil? ? '原版' : format('固定%d次', fixed)
+                    end
+      add_command('每回合行动次数：' + count_label, :action_times)
+      add_command('使用方式：' + (plan[:mode] == :sequence ? '按顺序循环' : '列表内随机'), :mode)
+      add_command('添加技能', :add)
+      add_command(format('已选技能列表（%d项）', plan[:skills].size), :queue)
+      unless preset?
+        add_command('保存为战斗前预设', :save_preset)
+      end
+      add_command(preset? ? '清空预设' : '清空配置', :clear,
+        !plan[:skills].empty? || !plan[:action_times].nil? || (preset? && ResearchMod.pre_battle_enemy_action_enabled?))
+    when :action_times
+      add_command('使用原版次数', :original_times)
+      add_command('设置固定次数……', :fixed_times)
+      add_command('按技能列表长度', :list_times)
+    when :long_list
+      add_command('确定继续（每回合' + @data[:count].to_s + '次）', :confirm_long_list)
+    when :queue
+      plan[:skills].each_with_index do |skill_id, position|
+        skill = $data_skills[skill_id]
+        label = skill ? skill_label(skill) : format('%d 无效技能', skill_id)
+        add_command(format('%d. %s', position + 1, label), :select, true, position)
+      end
+      add_command('全部移除', :remove_all, !plan[:skills].empty?)
+    when :remove_all
+      add_command('确定移除全部已选技能', :confirm_remove_all)
+    when :edit
+      position = @data[:position]
+      add_command('上移', :up, position > 0)
+      add_command('下移', :down, position < plan[:skills].size - 1)
+      add_command('移除此项', :remove)
+    when :clear
+      add_command(preset? ? '确定清空预设并关闭自动应用' : '确定清空并关闭此敌人的指定', :confirm_clear)
+    when :save_preset
+      add_command('确定覆盖战斗前敌方行动预设', :confirm_save_preset)
+    when :categories
+      add_command('该敌人配置的技能', :native) unless preset?
+      add_command('全部技能', :all)
+      ResearchMod.all_skill_categories.each do |category|
+        add_command(category[:label], :category, true, category)
+      end
+    when :types
+      ResearchMod.all_skill_type_entries(@data[:category]).each do |entry|
+        add_command(format('%d %s', entry[:type_id], entry[:name]), :type, true, entry)
+      end
+    when :skills
+      entries = ResearchMod.enemy_action_skills(@enemy, @data[:kind], @data[:type_id])
+      page = ResearchMod.enemy_action_skill_page(entries, @data[:start_id] || 1)
+      add_command('重新输入起始ID', :reinput)
+      add_command('加载上一批200项', :previous, !page[:previous].nil?, page[:previous])
+      page[:entries].each do |skill|
+        count = plan[:skills].count(skill.id)
+        suffix = count > 0 ? format('【已添加×%d】', count) : ''
+        add_command(skill_label(skill) + suffix, :skill, true, skill)
+      end
+      add_command('加载下一批200项', :next, !page[:next].nil?, page[:next])
+      add_command('重新输入起始ID', :reinput)
+    end
+    add_command('返回', :cancel)
+  end
+
+  def select(index)
+    super
+    update_help
+  end
+
+  def update_help
+    return unless @plan_help_window
+
+    if @mode == :skills
+      @detail_window.set_enemy_skill(@enemy, current_symbol == :skill ? current_ext : nil) if @detail_window
+      return
+    end
+    text = case @mode
+           when :enemies
+             '选择本场敌人；同名敌人按位置分别配置。'
+           when :settings
+             if preset?
+               "长期预设随存档保存；自动应用默认关闭。\n需同时开启战斗前修改总开关；开战时应用到敌方全体。\n各敌人独立从首项开始，本场修改不回写预设。"
+             else
+               format('%d号位：%s', @enemy.index + 1, ResearchMod.short_item_name(@enemy.name)) +
+                 "\n技能指定与次数独立，仅本场有效，当前回合生效。\n保存为战斗前预设需确认，不会自动开启应用。"
+             end
+           when :action_times
+             "原版／固定0～20次／技能列表长度（空时原版）。\n列表长度随增删更新，重复项计数；超过20项需确认。\n次数与选招独立；无法行动、消耗及冷却限制保留。"
+           when :long_list
+             format("列表将有%d项，每回合安排%d次正常行动。\n超过20次可能导致回合过长；不会截断次数。\n确定继续；取消不修改列表或次数设置。", @data[:count], @data[:count])
+           when :queue
+             "选择一项上移、下移或移除；允许重复技能。\n全部移除只清空技能，保留次数设置及使用方式。"
+           when :remove_all
+             "移除当前敌人的全部已选技能并关闭技能指定。\n保留次数设置及使用方式；列表长度模式空时使用原版。\n确定后生效；取消不修改。"
+           when :edit
+             '调整列表顺序；修改后顺序循环从第一项重新开始。'
+           when :clear
+             preset? ? '清空长期预设并关闭自动应用；取消不修改，不影响已开始的战斗。' :
+               '清空当前敌人的技能列表并恢复原版次数；不修改长期预设，取消不修改。'
+           when :save_preset
+             "覆盖长期预设的技能、开关、次数及使用方式，随存档保存。\n不保存顺序进度，不改变自动应用开关；取消不修改。"
+           else
+             "选择分类后浏览技能，确认即可追加。\n全部技能包含内部技能，可能依赖形态或事件。"
+           end
+    @plan_help_window.set_text(text)
+  end
+
+  def cursor_right(wrap = false)
+    @mode == :skills ? @detail_window.scroll_page(1) : super
+  end
+
+  def cursor_left(wrap = false)
+    @mode == :skills ? @detail_window.scroll_page(-1) : super
+  end
+end
+
+class Window_ResearchModEnemyActionIdInput < Window_ResearchModLearningIdInput
+  def setup(initial_id)
+    super
+    self.z = 620
+  end
+end
+
+class Window_ResearchModEnemyActionCountInput < Window_NumberInputBase
+  def setup(value)
+    start(2, [[value.to_i, 0].max, 20].min)
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - height) / 2
+    self.z = 620
+  end
+
+  def process_ok
+    if @number >= 0 && @number <= 20
+      super
+    else
+      Sound.play_buzzer
+    end
+  end
+end
+
+module ResearchModEnemyActionEditor
+  def open_research_mod_enemy_action_plan(preset_enemy = nil)
+    @research_mod_battle_edit_main_window.hide.deactivate.unselect unless preset_enemy
+    unless @research_mod_enemy_plan_menu
+      @research_mod_enemy_plan_menu = Window_ResearchModEnemyActionMenu.new(
+        @research_mod_battle_edit_help_window)
+      detail_x = ResearchMod.class_learning_half_width
+      @research_mod_enemy_plan_detail = Window_ResearchModEnemyActionHelp.new(
+        detail_x, 0, Graphics.width - detail_x, Graphics.height)
+      @research_mod_enemy_plan_detail.z = 610
+      @research_mod_enemy_plan_detail.hide
+      @research_mod_enemy_plan_menu.detail_window = @research_mod_enemy_plan_detail
+      [:select, :toggle, :mode, :queue, :add, :clear, :up, :down, :remove,
+       :confirm_clear, :native, :all, :category, :type, :skill, :reinput,
+       :previous, :next, :action_times, :original_times, :fixed_times,
+       :list_times, :confirm_long_list, :remove_all, :confirm_remove_all,
+       :auto_apply, :save_preset, :confirm_save_preset].each do |symbol|
+        @research_mod_enemy_plan_menu.set_handler(symbol,
+          method(:select_research_mod_enemy_action_command))
+      end
+      @research_mod_enemy_plan_menu.set_handler(:cancel,
+        method(:back_research_mod_enemy_action_page))
+    end
+    @research_mod_enemy_plan_stack = []
+    @research_mod_enemy_plan_enemy = preset_enemy
+    show_research_mod_enemy_action_page(preset_enemy ? :settings : :enemies)
+  end
+
+  def show_research_mod_enemy_action_page(mode, data = {}, index = 0)
+    skills = mode == :skills
+    skills ? @research_mod_battle_edit_help_window.hide :
+      @research_mod_battle_edit_help_window.show
+    skills ? @research_mod_enemy_plan_detail.show : @research_mod_enemy_plan_detail.hide
+    @research_mod_enemy_plan_menu.setup(mode, data, @research_mod_enemy_plan_enemy, index)
+  end
+
+  def push_research_mod_enemy_action_page(mode, data = {})
+    menu = @research_mod_enemy_plan_menu
+    @research_mod_enemy_plan_stack << [menu.mode, menu.data.dup, menu.index]
+    show_research_mod_enemy_action_page(mode, data)
+  end
+
+  def back_research_mod_enemy_action_page
+    if @research_mod_enemy_plan_stack.empty?
+      @research_mod_enemy_plan_menu.hide.deactivate.unselect
+      @research_mod_enemy_plan_detail.hide
+      @research_mod_battle_edit_help_window.show
+      close_research_mod_enemy_action_editor
+    else
+      show_research_mod_enemy_action_page(*@research_mod_enemy_plan_stack.pop)
+    end
+  end
+
+  def refresh_research_mod_enemy_action_page
+    menu = @research_mod_enemy_plan_menu
+    show_research_mod_enemy_action_page(menu.mode, menu.data, menu.index)
+  end
+
+  def select_research_mod_enemy_action_command
+    menu = @research_mod_enemy_plan_menu
+    symbol, entry = menu.current_symbol, menu.current_ext
+    case symbol
+    when :select
+      if menu.mode == :enemies
+        @research_mod_enemy_plan_enemy = entry
+        push_research_mod_enemy_action_page(:settings)
+      else
+        push_research_mod_enemy_action_page(:edit, :position => entry)
+      end
+    when :toggle, :mode
+      plan = menu.plan
+      if symbol == :toggle
+        plan[:enabled] = !plan[:enabled]
+      else
+        plan[:mode] = plan[:mode] == :sequence ? :random : :sequence
+      end
+      plan[:cursor] = 0
+      refresh_research_mod_enemy_action_page
+    when :auto_apply
+      ResearchMod.toggle_pre_battle_enemy_action
+      refresh_research_mod_enemy_action_page
+    when :queue, :add, :clear, :action_times, :remove_all, :save_preset
+      mode = { :queue => :queue, :add => :categories, :clear => :clear,
+        :action_times => :action_times, :remove_all => :remove_all,
+        :save_preset => :save_preset }[symbol]
+      push_research_mod_enemy_action_page(mode)
+    when :confirm_save_preset
+      ResearchMod.save_pre_battle_enemy_action_plan(menu.plan)
+      back_research_mod_enemy_action_page
+    when :confirm_remove_all
+      plan = menu.plan
+      plan[:skills].clear
+      plan[:enabled] = false
+      plan[:cursor] = 0
+      back_research_mod_enemy_action_page
+    when :original_times
+      menu.plan[:action_times] = nil
+      back_research_mod_enemy_action_page
+    when :fixed_times
+      open_research_mod_enemy_action_count_input
+    when :list_times
+      if menu.plan[:skills].size > 20
+        push_research_mod_enemy_action_page(:long_list,
+          :operation => :list_times, :count => menu.plan[:skills].size)
+      else
+        menu.plan[:action_times] = :list_length
+        back_research_mod_enemy_action_page
+      end
+    when :confirm_long_list
+      if menu.data[:operation] == :skill
+        append_research_mod_enemy_action_skill(menu.data[:skill_id])
+        back_research_mod_enemy_action_page
+      else
+        menu.plan[:action_times] = :list_length
+        back_research_mod_enemy_action_page
+        back_research_mod_enemy_action_page
+      end
+    when :up, :down, :remove
+      edit_research_mod_enemy_action_entry(symbol)
+    when :confirm_clear
+      @research_mod_enemy_plan_enemy.research_mod_reset_enemy_action_plan
+      back_research_mod_enemy_action_page
+    when :native, :all
+      push_research_mod_enemy_action_page(:skills, :kind => symbol, :start_id => 1)
+    when :category
+      push_research_mod_enemy_action_page(:types, :category => entry)
+    when :type
+      push_research_mod_enemy_action_page(:skills, :kind => :type,
+        :type_id => entry[:type_id], :start_id => 1)
+    when :skill
+      plan = menu.plan
+      if plan[:action_times] == :list_length && plan[:skills].size >= 20
+        push_research_mod_enemy_action_page(:long_list,
+          :operation => :skill, :skill_id => entry.id, :count => plan[:skills].size + 1)
+      else
+        append_research_mod_enemy_action_skill(entry.id)
+        refresh_research_mod_enemy_action_page
+      end
+    when :previous, :next
+      show_research_mod_enemy_action_page(:skills, menu.data.merge(:start_id => entry))
+    when :reinput
+      open_research_mod_enemy_action_id_input
+    end
+  end
+
+  def append_research_mod_enemy_action_skill(skill_id)
+    plan = @research_mod_enemy_plan_menu.plan
+    plan[:enabled] = true if plan[:skills].empty?
+    plan[:skills] << skill_id
+    plan[:cursor] = 0
+  end
+
+  def edit_research_mod_enemy_action_entry(operation)
+    menu = @research_mod_enemy_plan_menu
+    plan = menu.plan
+    position = menu.data[:position]
+    if operation == :remove
+      plan[:skills].delete_at(position)
+    else
+      destination = position + (operation == :up ? -1 : 1)
+      if destination >= 0 && destination < plan[:skills].size
+        plan[:skills][position], plan[:skills][destination] =
+          plan[:skills][destination], plan[:skills][position]
+        position = destination
+      end
+    end
+    plan[:cursor] = 0
+    plan[:enabled] = false if plan[:skills].empty?
+    @research_mod_enemy_plan_stack.pop
+    show_research_mod_enemy_action_page(:queue, {}, position)
+  end
+
+  def open_research_mod_enemy_action_id_input
+    @research_mod_enemy_plan_menu.deactivate
+    @research_mod_battle_edit_help_window.z = 630
+    @research_mod_battle_edit_help_window.show
+    @research_mod_battle_edit_help_window.set_text(
+      "请输入当前技能列表的起始ID。\n确定：加载最多200项；取消：返回原列表。")
+    @research_mod_enemy_plan_id_input ||= Window_ResearchModEnemyActionIdInput.new
+    @research_mod_enemy_plan_id_input.set_handler(:ok,
+      method(:apply_research_mod_enemy_action_start_id))
+    @research_mod_enemy_plan_id_input.set_handler(:cancel,
+      method(:close_research_mod_enemy_action_id_input))
+    @research_mod_enemy_plan_id_input.show
+    @research_mod_enemy_plan_id_input.setup(@research_mod_enemy_plan_menu.data[:start_id] || 1)
+  end
+
+  def close_research_mod_enemy_action_id_input
+    @research_mod_enemy_plan_id_input.close
+    @research_mod_enemy_plan_id_input.hide
+    @research_mod_enemy_plan_id_input.deactivate
+    @research_mod_battle_edit_help_window.z = 570
+    @research_mod_battle_edit_help_window.hide
+    @research_mod_enemy_plan_menu.activate
+    @research_mod_enemy_plan_menu.update_help
+  end
+
+  def apply_research_mod_enemy_action_start_id
+    start_id = @research_mod_enemy_plan_id_input.number
+    close_research_mod_enemy_action_id_input
+    data = @research_mod_enemy_plan_menu.data.merge(:start_id => start_id)
+    show_research_mod_enemy_action_page(:skills, data)
+  end
+
+  def open_research_mod_enemy_action_count_input
+    menu = @research_mod_enemy_plan_menu
+    menu.deactivate
+    @research_mod_enemy_plan_count_input ||= Window_ResearchModEnemyActionCountInput.new
+    input = @research_mod_enemy_plan_count_input
+    input.set_handler(:ok, method(:apply_research_mod_enemy_action_count))
+    input.set_handler(:cancel, method(:close_research_mod_enemy_action_count_input))
+    @research_mod_battle_edit_help_window.set_text(
+      "请输入固定行动次数：0～20；0表示无正常行动。\n确定：保存；取消：保留原设置。\n恢复原版次数请返回后选择“使用原版次数”。")
+    value = menu.enemy.research_mod_enemy_action_times
+    value = menu.enemy.actions.size if value.nil?
+    input.show
+    input.setup(value)
+  end
+
+  def close_research_mod_enemy_action_count_input
+    @research_mod_enemy_plan_count_input.close
+    @research_mod_enemy_plan_count_input.hide
+    @research_mod_enemy_plan_count_input.deactivate
+    @research_mod_enemy_plan_menu.activate
+    @research_mod_enemy_plan_menu.update_help
+  end
+
+  def apply_research_mod_enemy_action_count
+    @research_mod_enemy_plan_menu.plan[:action_times] = @research_mod_enemy_plan_count_input.number
+    close_research_mod_enemy_action_count_input
+    back_research_mod_enemy_action_page
+  end
+
+  def dispose_research_mod_enemy_action_editor
+    [:@research_mod_enemy_plan_menu, :@research_mod_enemy_plan_detail,
+     :@research_mod_enemy_plan_id_input, :@research_mod_enemy_plan_count_input].each do |name|
+      window = instance_variable_get(name)
+      window.dispose if window && !window.disposed?
+      instance_variable_set(name, nil)
+    end
+  end
+end
+
+class Scene_Battle
+  include ResearchModEnemyActionEditor
+  alias research_mod_enemy_plan_create_enemy_window create_enemy_window
+  alias research_mod_enemy_plan_terminate terminate
+
+  def create_enemy_window
+    research_mod_enemy_plan_create_enemy_window
+    @research_mod_battle_edit_main_window.set_handler(:enemy_action_plan,
+      method(:open_research_mod_enemy_action_plan))
+  end
+
+  def close_research_mod_enemy_action_editor
+    @research_mod_battle_edit_main_window.open_window
+  end
+
+  def terminate
+    research_mod_enemy_plan_terminate
+  ensure
+    $game_troop.members.each { |enemy| enemy.research_mod_reset_enemy_action_plan } if $game_troop
+    dispose_research_mod_enemy_action_editor
+  end
+end
+
+class Window_ResearchModPreBattleMenu
+  alias research_mod_enemy_plan_pre_battle_commands make_command_list
+  alias research_mod_enemy_plan_pre_battle_help update_help
+
+  def make_command_list
+    research_mod_enemy_plan_pre_battle_commands
+    @list.insert(@list.size - 1, { :name => '敌方行动指定', :symbol => :enemy_action_plan,
+      :enabled => true, :ext => nil })
+  end
+
+  def update_help
+    if current_symbol == :enemy_action_plan
+      @help_window.set_text('设置每场开战时应用到敌方全体的技能及行动次数预设，随存档保存。') if @help_window
+    else
+      research_mod_enemy_plan_pre_battle_help
+    end
+  end
+end
+
+class Scene_ResearchMod
+  include ResearchModEnemyActionEditor
+  alias research_mod_enemy_plan_open_pre_battle open_pre_battle_mod
+  alias research_mod_enemy_plan_menu_terminate terminate
+
+  def open_pre_battle_mod
+    research_mod_enemy_plan_open_pre_battle
+    @pre_battle_mod_window.set_handler(:enemy_action_plan,
+      method(:open_pre_battle_enemy_action_plan))
+  end
+
+  def open_pre_battle_enemy_action_plan
+    @pre_battle_mod_window.hide.deactivate
+    @command_help_window.hide
+    @research_mod_battle_edit_help_window ||= Window_Help.new(4)
+    @research_mod_battle_edit_help_window.y = @command_help_window.y
+    @research_mod_battle_edit_help_window.z = 570
+    open_research_mod_enemy_action_plan(ResearchMod::EnemyActionPreset.new)
+  end
+
+  def close_research_mod_enemy_action_editor
+    @research_mod_battle_edit_help_window.hide
+    @command_help_window.show
+    @pre_battle_mod_window.refresh
+    @pre_battle_mod_window.show.activate
+    @pre_battle_mod_window.update_help
+  end
+
+  def terminate
+    dispose_research_mod_enemy_action_editor
+    if @research_mod_battle_edit_help_window && !@research_mod_battle_edit_help_window.disposed?
+      @research_mod_battle_edit_help_window.dispose
+    end
+    @research_mod_battle_edit_help_window = nil
+    research_mod_enemy_plan_menu_terminate
+  end
+end
+
+# Manual save expansion uses global configuration and a bounded window pool.
+module ResearchMod
+  def self.save_expansion_enabled?
+    # Read the hash directly because config_value treats false as missing.
+    data = config_data
+    return data['save_expansion_enabled'] != false if data.key?('save_expansion_enabled')
+    # Preserve the disabled state of the previous numeric configuration.
+    legacy = data['manual_save_limit']
+    !legacy.is_a?(Integer) || legacy > ORIGINAL_MANUAL_SAVE_LIMIT
+  end
+
+  def self.manual_save_limit
+    save_expansion_enabled? ? EXPANDED_MANUAL_SAVE_LIMIT : ORIGINAL_MANUAL_SAVE_LIMIT
+  end
+
+  # Serialize without requiring the optional JSON standard library in RGSS.
+  def self.encode_save_config_json(value)
+    case value
+    when Hash
+      '{' + value.map { |key, item|
+        encode_save_config_json(key.to_s) + ':' + encode_save_config_json(item)
+      }.join(',') + '}'
+    when Array
+      '[' + value.map { |item| encode_save_config_json(item) }.join(',') + ']'
+    when String
+      '"' + value.each_char.map { |char|
+        if char == '"' || char == 92.chr
+          92.chr + char
+        elsif char.ord < 32
+          format('\\u%04x', char.ord)
+        else
+          char
+        end
+      }.join + '"'
+    when Integer, Float
+      raise ArgumentError, 'Non-finite configuration value' if
+        value.is_a?(Float) && !value.finite?
+      value.to_s
+    when TrueClass then 'true'
+    when FalseClass then 'false'
+    when NilClass then 'null'
+    else
+      raise ArgumentError, 'Unsupported configuration value'
+    end
+  end
+
+  def self.set_save_expansion_enabled(value)
+    set_save_option('save_expansion_enabled', value)
+  end
+
+  def self.save_notes_enabled?
+    config_data['save_notes_enabled'] != false
+  end
+
+  def self.set_save_notes_enabled(value)
+    set_save_option('save_notes_enabled', value)
+  end
+
+  def self.set_save_option(key, value)
+    if key == 'item_stack_limit'
+      return false unless value.is_a?(Integer) && (99..9999).include?(value)
+    else
+      return false unless ['save_expansion_enabled', 'save_notes_enabled', 'inventory_repair_enabled',
+        'item_stack_limit_enabled'].include?(key)
+      return false unless value == true || value == false
+    end
+
+    # Read strictly so an invalid existing configuration is never overwritten.
+    data = {}
+    if File.file?(CONFIG_FILE)
+      source = File.open(CONFIG_FILE, 'rb') { |file| file.read }
+      source.force_encoding('UTF-8')
+      data = parse_config_json(source.sub(/\A\uFEFF/, ''))
+      raise ArgumentError, 'Expected a configuration object' unless data.is_a?(Hash)
+    end
+    if key == 'save_expansion_enabled'
+      data.delete('manual_save_limit')
+    end
+    data[key] = value
+    if key == 'save_expansion_enabled' && data['__field_help'].is_a?(Hash)
+      data['__field_help'].delete('manual_save_limit')
+      data['__field_help']['save_expansion_enabled'] =
+        '存档扩容开关，默认开启；开启999档，关闭99档。关闭后仍可读取高编号旧档。'
+    end
+    output = "{\n" + data.map { |key, item|
+      '  ' + encode_save_config_json(key.to_s) + ': ' + encode_save_config_json(item)
+    }.join(",\n") + "\n}\n"
+    temporary = CONFIG_FILE + '.save-limit.tmp'
+    File.open(temporary, 'wb') { |file| file.write(output); file.flush }
+    File.rename(temporary, CONFIG_FILE)
+    reload_config
+    true
+  rescue StandardError => error
+    puts "ResearchMod save configuration: #{error.class}: #{error.message}"
+    false
+  end
+
+  def self.manual_save_indices
+    Dir.glob('Save/Save*.rvdata2').map { |path|
+      match = /\ASave(\d+)\.rvdata2\z/.match(File.basename(path))
+      next unless match
+      number = match[1].to_i
+      next unless number > 0
+      index = number - 1
+      next unless path == DataManager.make_filename(index)
+      index
+    }.compact.sort
+  end
+end
+
+class Window_ResearchModSaveNumber < Window_NumberInputBase
+  def setup(value, minimum, maximum)
+    @minimum, @maximum = minimum, maximum
+    start(maximum.to_s.size, value)
+    self.x = (Graphics.width - width) / 2
+    self.y = (Graphics.height - height) / 2
+    self.z = 500
+    show
+  end
+
+  def process_ok
+    unless (@minimum..@maximum).include?(@number)
+      Sound.play_buzzer
+      return
+    end
+    super
+  end
+end
+
+class Scene_ResearchMod
+  def toggle_save_notes
+    saved = ResearchMod.set_save_notes_enabled(!ResearchMod.save_notes_enabled?)
+    @command_window.refresh if saved
+    @command_window.activate
+    if saved
+      @command_window.update_help
+    else
+      Sound.play_buzzer
+      @command_help_window.set_text("设置保存失败，原配置未修改。\n请检查 GouqiConfig.json 格式及写入权限。")
+    end
+  end
+
+  def toggle_save_expansion
+    unless ResearchMod.set_save_expansion_enabled(!ResearchMod.save_expansion_enabled?)
+      Sound.play_buzzer
+      @command_help_window.set_text(
+        "设置保存失败，原配置未修改。\n请检查 GouqiConfig.json 格式及写入权限。\n可取消返回。"
+      )
+      @command_window.activate
+      return
+    end
+    @command_window.refresh
+    @command_window.activate
+    @command_window.update_help
+  end
+end
+
+module DataManager
+  def self.savefile_max
+    ResearchMod.manual_save_limit
+  end
+
+  # Inspect real files, including old slots above the configured save limit.
+  def self.latest_savefile_index
+    ResearchMod.manual_save_indices.max_by { |i| savefile_time_stamp(i) } || 0
+  end
+
+  def self.research_mod_keep_thumbnails(indices)
+    return unless @thumbnails
+    @thumbnails.keys.each do |index|
+      next if indices.include?(index)
+      bitmap = @thumbnails.delete(index)
+      bitmap.dispose if bitmap && !bitmap.disposed?
+    end
+  end
+end
+
+class Window_ResearchModSaveFile < Window_SaveFile
+  def refresh
+    super
+    return unless ResearchMod.save_notes_enabled?
+    header = DataManager.load_header(@file_index)
+    return unless header.is_a?(Hash)
+    note = ResearchMod.save_note_from_header(header)
+    text = note.empty? ? '备注：（无）' : '备注：' + note
+    available = contents.width - 164
+    if text_size(text).width > available
+      text = text[0...-1] while !text.empty? && text_size(text + '...').width > available
+      text += '...'
+    end
+    change_color(normal_color)
+    draw_text(164, line_height, available, line_height, text)
+  end
+
+  def research_mod_show_slot(index, row)
+    changed = @research_mod_display_index != index
+    @file_index = index
+    @research_mod_display_index = index
+    self.y = row * height
+    refresh if changed
+  end
+
+  # Fit the original thumbnail beneath the two-line navigation help.
+  def draw_thumbnail(x, y)
+    bitmap = DataManager.get_thumbnail(@file_index)
+    bitmap ||= DataManager.get_dummy_thumbnail
+    scale = [160.0 / bitmap.width, contents.height.to_f / bitmap.height, 1.0].min
+    width = (bitmap.width * scale).to_i
+    height = (bitmap.height * scale).to_i
+    target = Rect.new(x + (160 - width) / 2, y, width, height)
+    contents.stretch_blt(target, bitmap, bitmap.rect)
+  end
+end
+
+# Include only in game save/load scenes; formation presets keep their own UI.
+module ResearchModSaveBrowser
+  def visible_max
+    ResearchMod.save_notes_enabled? ? 2 : super
+  end
+
+  def create_help_window
+    @help_window = Window_Help.new(2)
+    @help_window.set_text(help_window_text)
+  end
+
+  def create_savefile_windows
+    # SceneManager returns the same scene object, whose old windows are disposed.
+    @research_mod_jump_window = nil
+    @research_mod_jump_closed = false
+    @research_mod_slot_count = DataManager.savefile_max
+    if is_a?(Scene_Load)
+      last = ResearchMod.manual_save_indices.last
+      @research_mod_slot_count = [@research_mod_slot_count, last + 1].max if last
+    end
+    @research_mod_top_index = 0
+    @savefile_viewport.oy = 0
+    @savefile_windows = Array.new(visible_max) do |row|
+      window = Window_ResearchModSaveFile.new(savefile_height, row)
+      window.viewport = @savefile_viewport
+      window
+    end
+  end
+
+  def item_max
+    @research_mod_slot_count || DataManager.savefile_max
+  end
+
+  def top_index
+    @research_mod_top_index || 0
+  end
+
+  def top_index=(value)
+    @research_mod_top_index = [[value, 0].max, [item_max - visible_max, 0].max].min
+  end
+
+  def init_selection
+    restored = @research_mod_note_return_selection
+    @research_mod_note_return_selection = nil
+    @index = [[(restored ? restored[0] : first_savefile_index).to_i, 0].max, item_max - 1].min
+    self.top_index = restored ? restored[1] : @index - visible_max / 2
+    draw_page
+  end
+
+  def draw_page
+    indices = (top_index..bottom_index).to_a
+    DataManager.research_mod_keep_thumbnails(indices)
+    @savefile_windows.each_with_index do |window, row|
+      slot = top_index + row
+      window.research_mod_show_slot(slot, row)
+      window.selected = slot == @index
+    end
+    help = format('第%d/%d档 Q/W翻页 A跳转', @index + 1, item_max)
+    help += ' S备注' if ResearchMod.save_notes_enabled?
+    @help_window.set_text(help_window_text + "\n" + help)
+  end
+
+  def update_cursor
+    last_index = @index
+    cursor_down(Input.trigger?(:DOWN)) if Input.repeat?(:DOWN)
+    cursor_up(Input.trigger?(:UP)) if Input.repeat?(:UP)
+    cursor_pagedown if Input.trigger?(:R)
+    cursor_pageup if Input.trigger?(:L)
+    return if last_index == @index
+    Sound.play_cursor
+    draw_page
+  end
+
+  def update_savefile_selection
+    return if @research_mod_jump_window && @research_mod_jump_window.active
+    # Consume the close frame so the same OK input cannot save or load a slot.
+    if @research_mod_jump_closed
+      @research_mod_jump_closed = false
+      return
+    end
+    return research_mod_open_save_jump if Input.trigger?(:X)
+    if ResearchMod.save_notes_enabled? && Input.trigger?(:Y)
+      return research_mod_open_save_note
+    end
+    super
+  end
+
+  def research_mod_open_save_note
+    header = DataManager.load_header(@index)
+    unless header.is_a?(Hash)
+      Sound.play_buzzer
+      @help_window.set_text("请先在此槽位保存游戏。\n已有存档无法读取时，不能编辑备注。")
+      return
+    end
+    Sound.play_ok
+    @research_mod_note_return_selection = [@index, top_index]
+    SceneManager.call(Scene_ResearchModSaveNoteInput)
+    SceneManager.scene.prepare_slot(@index, ResearchMod.save_note_from_header(header))
+  end
+
+  def research_mod_open_save_jump
+    Sound.play_ok
+    @research_mod_jump_window ||= Window_ResearchModSaveNumber.new
+    @research_mod_jump_window.set_handler(:ok, method(:research_mod_apply_save_jump))
+    @research_mod_jump_window.set_handler(:cancel, method(:research_mod_close_save_jump))
+    @research_mod_jump_window.setup(@index + 1, 1, item_max)
+    @savefile_windows.each { |window| window.selected = false }
+    @help_window.set_text(format("输入存档编号（1～%d）。\n确定：跳转；取消：返回列表。", item_max))
+  end
+
+  def research_mod_apply_save_jump
+    @index = @research_mod_jump_window.number - 1
+    self.top_index = @index - visible_max / 2
+    research_mod_close_save_jump
+  end
+
+  def research_mod_close_save_jump
+    @research_mod_jump_window.close.deactivate
+    @research_mod_jump_closed = true
+    draw_page
+  end
+end
+
+class Scene_Save
+  include ResearchModSaveBrowser
+end
+
+class Scene_Load
+  include ResearchModSaveBrowser
+end
+
+# Notes are plain header strings; the serialized game body is never evaluated.
+module ResearchMod
+  def self.normalize_save_note(value)
+    return '' unless value.is_a?(String)
+    text = value.encode('UTF-8', :invalid => :replace, :undef => :replace, :replace => '')
+    text.gsub(/[[:cntrl:]]/, ' ').strip[0, SAVE_NOTE_MAX_CHARS]
+  end
+
+  def self.save_note_from_header(header)
+    header.is_a?(Hash) ? normalize_save_note(header[:research_mod_note]) : ''
+  end
+
+  def self.write_save_note(index, value)
+    return false unless index.is_a?(Integer) && index >= 0
+    path = DataManager.make_filename(index)
+    temporary = path + '.note.tmp'
+    created = false
+    File.open(path, 'rb') do |source|
+      original_stat = source.stat
+      header = Marshal.load(source)
+      raise ArgumentError, 'Invalid save header' unless header.is_a?(Hash)
+      signature = source.read(2)
+      raise ArgumentError, 'Missing serialized save body' unless signature == "\x04\x08"
+      note = normalize_save_note(value)
+      if note.empty?
+        header.delete(:research_mod_note)
+      else
+        header[:research_mod_note] = note
+      end
+      # Exclusive creation avoids overwriting another operation's temporary file.
+      File.open(temporary, File::WRONLY | File::CREAT | File::EXCL) do |output|
+        created = true
+        output.binmode
+        Marshal.dump(header, output)
+        output.write(signature)
+        while chunk = source.read(65536)
+          output.write(chunk)
+        end
+        output.flush
+        output.fsync
+      end
+      File.utime(original_stat.atime, original_stat.mtime, temporary)
+      current = File.stat(path)
+      unless current.size == original_stat.size && current.mtime == original_stat.mtime
+        raise IOError, 'Save changed during note editing'
+      end
+    end
+    File.rename(temporary, path)
+    created = false
+    true
+  rescue StandardError => error
+    puts "ResearchMod save note: #{error.class}: #{error.message}"
+    false
+  ensure
+    if created && File.file?(temporary)
+      begin
+        File.delete(temporary)
+      rescue StandardError
+      end
+    end
+  end
+end
+
+module DataManager
+  class << self
+    alias research_mod_note_save_game_without_rescue save_game_without_rescue
+    alias research_mod_note_make_save_header make_save_header
+
+    def save_game_without_rescue(index)
+      previous_note = @research_mod_note_for_save
+      @research_mod_note_for_save = ResearchMod.save_note_from_header(load_header(index))
+      research_mod_note_save_game_without_rescue(index)
+    ensure
+      @research_mod_note_for_save = previous_note
+    end
+
+    def make_save_header
+      header = research_mod_note_make_save_header
+      note = @research_mod_note_for_save
+      header[:research_mod_note] = note if note.is_a?(String) && !note.empty?
+      header
+    end
+  end
+end
+
+class Scene_ResearchModSaveNoteInput < Scene_ResearchModTextInput
+  def prepare_slot(index, note)
+    @save_note_index = index
+    prepare(:research_mod_save_note, format('第%d档备注（最多20字）', index + 1),
+      note, ResearchMod::SAVE_NOTE_MAX_CHARS, '确定保存；留空清除；分类区取消返回。', proc do |value|
+      if ResearchMod.write_save_note(@save_note_index, value)
+        Sound.play_save
+        true
+      else
+        Sound.play_buzzer
+        @title_window.set_text("备注保存失败，原存档未修改。\n请检查文件及写入权限；可重试或取消。")
+        false
+      end
+    end)
   end
 end
